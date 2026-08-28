@@ -747,6 +747,7 @@ class MCP:
             discovered_prompts=plugin.discovered_prompts,
             registry=plugin.registry,
             task_store=plugin.task_store,
+            task_backend=plugin.task_backend,
         )
 
         resolved_stdio_context = stdio_context or MCPStdioContext()

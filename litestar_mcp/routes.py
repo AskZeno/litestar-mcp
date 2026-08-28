@@ -32,6 +32,7 @@ from litestar_mcp.jsonrpc import (
 from litestar_mcp.registry import PromptRegistration, Registry  # noqa: TC001
 from litestar_mcp.schema_builder import generate_schema_for_handler, iter_mcp_header_fields
 from litestar_mcp.services.handler import MCPHandlerService, MCPRequestContext
+from litestar_mcp.task_backends import TaskExecutionBackend  # noqa: TC001
 from litestar_mcp.tasks import MCPTaskStore  # noqa: TC001
 
 if TYPE_CHECKING:
@@ -277,6 +278,7 @@ def _build_cached_router(
     discovered_prompts: "dict[str, PromptRegistration]",
     registry: "Registry",
     task_store: "MCPTaskStore | None",
+    task_backend: "TaskExecutionBackend | None" = None,
 ) -> "JSONRPCRouter":
     router = JSONRPCRouter()
 
@@ -289,6 +291,7 @@ def _build_cached_router(
             app_ref=app,
             registry=registry,
             task_store=task_store,
+            task_backend=task_backend,
         )
 
     router.register("server/discover", lambda params, ctx: service().server_discover(params, ctx))
@@ -400,6 +403,7 @@ class MCPController(Controller):
         discovered_prompts: "NamedDependency[dict[str, PromptRegistration]]",
         registry: "NamedDependency[Registry]",
         task_store: "NamedDependency[MCPTaskStore | None]" = None,
+        task_backend: "NamedDependency[TaskExecutionBackend | None]" = None,
     ) -> "Response[Any]":
         """Validate and dispatch one independent MCP request."""
         origin_error = _validate_origin(request, config)
@@ -435,6 +439,7 @@ class MCPController(Controller):
                 discovered_prompts,
                 registry,
                 task_store,
+                task_backend,
             )
         router: JSONRPCRouter = app.state.mcp_router
         if rpc_request.method not in router.methods:

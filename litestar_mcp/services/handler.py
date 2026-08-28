@@ -1,7 +1,6 @@
 # ruff: noqa: PLR0915, C901
 """MCP service layer handler."""
 
-import asyncio
 import base64
 import contextvars
 import inspect
@@ -50,7 +49,8 @@ from litestar_mcp.registry import (
     should_include_prompt,
 )
 from litestar_mcp.schema_builder import generate_schema_for_handler
-from litestar_mcp.tasks import MCPTaskStore, TaskLookupError, TaskRecord
+from litestar_mcp.task_backends import TaskExecutionBackend, TaskInvocation
+from litestar_mcp.tasks import MCPTaskStore, TaskLookupError
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -393,6 +393,7 @@ class MCPHandlerService:
         app_ref: "Litestar",
         registry: "Registry | None",
         task_store: "MCPTaskStore | None" = None,
+        task_backend: "TaskExecutionBackend | None" = None,
     ) -> "None":
         self.config = config
         self.discovered_tools = discovered_tools
@@ -401,6 +402,7 @@ class MCPHandlerService:
         self.app_ref = app_ref
         self.registry = registry
         self.task_store = task_store
+        self.task_backend = task_backend
         self.task_config = config.task_config
 
     async def _execute_tool_call(
@@ -448,41 +450,6 @@ class MCPHandlerService:
             )
 
         return _build_tool_result(result, is_error=False, max_blob_bytes=self.config.max_blob_bytes)
-
-    async def _run_task(
-        self,
-        record: "TaskRecord",
-        tool_name: "str",
-        handler: "BaseRouteHandler",
-        tool_args: "dict[str, Any]",
-        context: "RequestContext",
-    ) -> "None":
-        if self.task_store is None:
-            return
-        try:
-            while True:
-                result = await self._execute_tool_call(tool_name, handler, tool_args, context)
-                if result.get("resultType") != "input_required":
-                    result.setdefault("resultType", "complete")
-                    await self.task_store.complete(record.task_id, result)
-                    return
-                await self.task_store.require_input(
-                    record.task_id,
-                    result.get("inputRequests"),
-                    result.get("requestState"),
-                )
-                context.input_responses = await self.task_store.wait_for_input(record.task_id)
-                context.request_state = result.get("requestState")
-        except JSONRPCErrorException as exc:
-            await self.task_store.fail(record.task_id, exc.error)
-        except asyncio.CancelledError:
-            await self.task_store.mark_cancelled(record.task_id)
-        except Exception as exc:  # noqa: BLE001
-            await self.task_store.fail(
-                record.task_id,
-                JSONRPCError(code=INTERNAL_ERROR, message=str(exc)),
-                status_message=str(exc),
-            )
 
     async def server_discover(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         """Describe the modern protocol versions, capabilities, and extensions."""
@@ -587,7 +554,7 @@ class MCPHandlerService:
         task_support = metadata.get("task_support")
         extensions = (context.client_capabilities or {}).get("extensions", {})
         task_capable = isinstance(extensions, dict) and TASKS_EXTENSION in extensions
-        task_enabled = self.task_config is not None and self.task_store is not None
+        task_enabled = self.task_config is not None and self.task_store is not None and self.task_backend is not None
         if task_support == "required" and not (task_enabled and task_capable):
             raise JSONRPCErrorException(
                 JSONRPCError(
@@ -604,11 +571,29 @@ class MCPHandlerService:
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
 
         task_store = self.task_store
-        if task_store is None:  # pragma: no cover - narrowed by task_enabled
+        task_backend = self.task_backend
+        if task_store is None or task_backend is None:  # pragma: no cover - narrowed by task_enabled
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
         record = await task_store.create(context.owner_id)
-        background_task = asyncio.create_task(self._run_task(record, tool_name, handler, tool_args, context))
-        await task_store.attach_runner(record.task_id, background_task)
+
+        async def run_tool(
+            input_responses: "dict[str, Any] | None",
+            request_state: "str | None",
+        ) -> "dict[str, Any]":
+            context.input_responses = input_responses
+            context.request_state = request_state
+            return await self._execute_tool_call(tool_name, handler, tool_args, context)
+
+        await task_backend.start(
+            record,
+            TaskInvocation(
+                task_id=record.task_id,
+                tool_name=tool_name,
+                arguments=tool_args,
+                owner_id=context.owner_id,
+                run_tool=run_tool,
+            ),
+        )
         return {"resultType": "task", **record.to_dict()}
 
     async def resources_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
@@ -953,9 +938,11 @@ class MCPHandlerService:
                 JSONRPCError(code=INVALID_PARAMS, message="The 'inputResponses' parameter must be an object")
             )
         try:
-            await self.task_store.update(task_id, context.owner_id, input_responses)
+            resume_payload = await self.task_store.update(task_id, context.owner_id, input_responses)
         except TaskLookupError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        if resume_payload is not None and self.task_backend is not None:
+            await self.task_backend.deliver_input(task_id, resume_payload)
         return {}
 
     async def tasks_cancel(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
@@ -966,9 +953,11 @@ class MCPHandlerService:
         if not task_id:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
-            await self.task_store.cancel(task_id, context.owner_id)
+            record = await self.task_store.get(task_id, context.owner_id)
         except TaskLookupError as exc:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        if not record.is_terminal() and self.task_backend is not None:
+            await self.task_backend.cancel(task_id)
         return {}
 
 

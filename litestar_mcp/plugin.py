@@ -16,6 +16,7 @@ from litestar_mcp.registry import PromptRegistration, Registry
 from litestar_mcp.routes import MCPController
 from litestar_mcp.schema_builder import generate_schema_for_handler, validate_mcp_header_schema
 from litestar_mcp.sse import SubscriptionManager
+from litestar_mcp.task_backends import AsyncioTaskBackend, TaskExecutionBackend
 from litestar_mcp.tasks import MCPTaskStore, TaskRecord
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
@@ -67,6 +68,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             channels=self._config.subscription_channels,
         )
         self._task_store: MCPTaskStore | None = None
+        self._task_backend: TaskExecutionBackend | None = None
         if self._config.task_config is not None:
             task_config = self._config.task_config
             self._task_store = MCPTaskStore(
@@ -75,6 +77,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 max_ttl_ms=task_config.max_ttl_ms,
                 poll_interval_ms=task_config.poll_interval_ms,
             )
+            self._task_backend = task_config.execution_backend or AsyncioTaskBackend()
+            self._task_backend.bind(self._task_store)
 
     @property
     def config(self) -> "MCPConfig":
@@ -90,6 +94,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
     def task_store(self) -> "MCPTaskStore | None":
         """Get the task store."""
         return self._task_store
+
+    @property
+    def task_backend(self) -> "TaskExecutionBackend | None":
+        """Get the task execution backend."""
+        return self._task_backend
 
     @property
     def discovered_tools(self) -> "dict[str, BaseRouteHandler]":
@@ -143,6 +152,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_task_store() -> "MCPTaskStore | None":
             return self._task_store
 
+        def provide_task_backend() -> "TaskExecutionBackend | None":
+            return self._task_backend
+
         router_kwargs: dict[str, Any] = {
             "path": self._config.base_path,
             "route_handlers": [MCPController],
@@ -152,6 +164,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
                 "task_store": Provide(provide_task_store, sync_to_thread=False),
+                "task_backend": Provide(provide_task_backend, sync_to_thread=False),
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
                 "discovered_resources": Provide(lambda: self._registry.resources, sync_to_thread=False),
                 "discovered_prompts": Provide(lambda: self._registry.prompts, sync_to_thread=False),
@@ -227,8 +240,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             delattr(app.state, "mcp_router_invalidation_callback")
             _logger.debug("Unregistered invalidate_router callback from registry")
         await self._subscription_manager.close_all()
-        if self._task_store is not None:
-            await self._task_store.close()
+        if self._task_backend is not None:
+            await self._task_backend.close()
 
     def _discover_mcp_routes(self, route_handlers: "Sequence[Any]") -> "None":
         """Discover routes marked for MCP exposure via opt attribute or decorators."""

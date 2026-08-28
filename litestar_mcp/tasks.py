@@ -1,4 +1,11 @@
-"""Durable support for the ``io.modelcontextprotocol/tasks`` extension."""
+"""Durable record support for the ``io.modelcontextprotocol/tasks`` extension.
+
+Task *records* persist here through a pluggable Litestar :class:`Store`.
+Task *execution* lives behind
+:class:`~litestar_mcp.task_backends.TaskExecutionBackend`; backends report
+every transition through :meth:`MCPTaskStore.record_status`, the one
+writer that persists a record and fans out task-status notifications.
+"""
 
 import asyncio
 from collections.abc import Awaitable, Callable
@@ -74,10 +81,9 @@ class TaskRecord:
 class MCPTaskStore:
     """Task records backed by a Litestar :class:`Store`.
 
-    Only serializable records are persisted. Runner tasks, cancellation flags,
-    and input queues are process-local coordination primitives; production
-    deployments use a shared Store for retrieval and a shared notification
-    backend for fan-out.
+    Only serializable records are persisted; execution primitives live in
+    the configured task backend. Production deployments use a shared Store
+    for retrieval and a shared notification backend for fan-out.
     """
 
     def __init__(
@@ -94,10 +100,7 @@ class MCPTaskStore:
         self.poll_interval_ms = poll_interval_ms
         self.status_callback = status_callback
         self._lock = asyncio.Lock()
-        self._runners: dict[str, asyncio.Task[Any]] = {}
-        self._input_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self._input_responses: dict[str, dict[str, Any]] = {}
-        self._cancel_events: dict[str, asyncio.Event] = {}
 
     def set_status_callback(self, callback: Callable[[TaskRecord], Awaitable[None]] | None) -> None:
         """Set the task-state notification callback."""
@@ -118,17 +121,9 @@ class MCPTaskStore:
             status_message="The operation is now in progress.",
         )
         async with self._lock:
-            self._input_queues[record.task_id] = asyncio.Queue()
-            self._cancel_events[record.task_id] = asyncio.Event()
             await self._save(record)
         await self._notify(record)
         return record
-
-    async def attach_runner(self, task_id: str, runner: asyncio.Task[Any]) -> None:
-        """Attach a process-local runner to a durable task."""
-        async with self._lock:
-            await self._lookup(task_id, None)
-            self._runners[task_id] = runner
 
     async def get(self, task_id: str, owner_id: str | None) -> TaskRecord:
         """Retrieve a task, enforcing authenticated ownership when present."""
@@ -137,11 +132,11 @@ class MCPTaskStore:
 
     async def complete(self, task_id: str, result: dict[str, Any]) -> TaskRecord:
         """Persist a successful tool result."""
-        return await self._transition(task_id, "completed", result=result, status_message=None)
+        return await self.record_status(task_id, "completed", result=result, status_message=None)
 
     async def fail(self, task_id: str, error: JSONRPCError, status_message: str | None = None) -> TaskRecord:
         """Persist a failed task."""
-        return await self._transition(task_id, "failed", error=error, status_message=status_message or error.message)
+        return await self.record_status(task_id, "failed", error=error, status_message=status_message or error.message)
 
     async def require_input(
         self,
@@ -150,7 +145,7 @@ class MCPTaskStore:
         request_state: str | None,
     ) -> TaskRecord:
         """Pause a task until the client supplies input via ``tasks/update``."""
-        return await self._transition(
+        return await self.record_status(
             task_id,
             "input_required",
             input_requests=input_requests or {},
@@ -158,31 +153,26 @@ class MCPTaskStore:
             status_message="Additional client input is required.",
         )
 
-    async def wait_for_input(self, task_id: str) -> dict[str, Any]:
-        """Wait for the next input response or cancellation request."""
-        queue = self._input_queues.setdefault(task_id, asyncio.Queue())
-        cancel_event = self._cancel_events.setdefault(task_id, asyncio.Event())
-        input_wait = asyncio.create_task(queue.get())
-        cancel_wait = asyncio.create_task(cancel_event.wait())
-        done, pending = await asyncio.wait({input_wait, cancel_wait}, return_when=asyncio.FIRST_COMPLETED)
-        for waiter in pending:
-            waiter.cancel()
-        if cancel_wait in done:
-            raise asyncio.CancelledError
-        return input_wait.result()
+    async def update(
+        self, task_id: str, owner_id: str | None, input_responses: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Submit client responses to a task waiting for input.
 
-    async def update(self, task_id: str, owner_id: str | None, input_responses: dict[str, Any]) -> None:
-        """Submit client responses to a task waiting for input."""
+        Returns the full merged response payload once every outstanding
+        input request is satisfied — the caller forwards it to the task
+        execution backend — and ``None`` while responses are still
+        outstanding or nothing was accepted.
+        """
         should_resume = False
         merged: dict[str, Any] = {}
         async with self._lock:
             record = await self._lookup(task_id, owner_id)
             if record.status != "input_required":
-                return
+                return None
             outstanding = record.input_requests or {}
             accepted = {key: value for key, value in input_responses.items() if key in outstanding}
             if not accepted:
-                return
+                return None
             merged = self._input_responses.setdefault(task_id, {})
             merged.update(accepted)
             remaining = {key: value for key, value in outstanding.items() if key not in accepted}
@@ -200,31 +190,14 @@ class MCPTaskStore:
         if should_resume:
             responses = dict(merged)
             self._input_responses.pop(task_id, None)
-            await self._input_queues.setdefault(task_id, asyncio.Queue()).put(responses)
-
-    async def cancel(self, task_id: str, owner_id: str | None) -> None:
-        """Request cooperative cancellation and acknowledge immediately."""
-        record = await self.get(task_id, owner_id)
-        if record.is_terminal():
-            return
-        self._cancel_events.setdefault(task_id, asyncio.Event()).set()
-        runner = self._runners.get(task_id)
-        if runner is not None:
-            runner.cancel()
+            return responses
+        return None
 
     async def mark_cancelled(self, task_id: str) -> TaskRecord:
-        """Persist cancellation after the runner cooperates."""
-        return await self._transition(task_id, "cancelled", status_message="The task was cancelled.")
+        """Persist cancellation after the executing work cooperates."""
+        return await self.record_status(task_id, "cancelled", status_message="The task was cancelled.")
 
-    async def close(self) -> None:
-        """Cancel all process-local runners during graceful shutdown."""
-        runners = list(self._runners.values())
-        for runner in runners:
-            runner.cancel()
-        if runners:
-            await asyncio.gather(*runners, return_exceptions=True)
-
-    async def _transition(
+    async def record_status(
         self,
         task_id: str,
         status: str,
@@ -235,6 +208,11 @@ class MCPTaskStore:
         result: dict[str, Any] | None = None,
         error: JSONRPCError | None = None,
     ) -> TaskRecord:
+        """The one status writer: persist a transition and fan out notifications.
+
+        Terminal records never reopen — a transition on a terminal task
+        returns the stored record unchanged.
+        """
         async with self._lock:
             record = await self._lookup(task_id, None)
             if record.is_terminal():

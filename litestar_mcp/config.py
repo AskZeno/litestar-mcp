@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 from litestar.stores.base import Store  # noqa: TC002
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
+from litestar_mcp.task_backends import TaskExecutionBackend  # noqa: TC001
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -126,6 +127,10 @@ class MCPTaskConfig:
     default_ttl_ms: "int" = 300_000
     max_ttl_ms: "int" = 3_600_000
     poll_interval_ms: "int" = 1_000
+    execution_backend: "TaskExecutionBackend | None" = None
+    """Owns how created tasks execute. ``None`` selects the in-process
+    asyncio runner; durable deployments supply a backend over their own
+    execution engine."""
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms < 0:

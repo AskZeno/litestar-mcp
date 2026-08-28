@@ -36,11 +36,14 @@ from litestar_mcp.exceptions import (
 from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.routes import MCPController
 from litestar_mcp.services.handler import MCPRequestContext, get_mcp_request_context
+from litestar_mcp.task_backends import AsyncioTaskBackend, TaskExecutionBackend, TaskInvocation
+from litestar_mcp.tasks import MCPTaskStore, TaskRecord
 from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 
 __all__ = (
     "MCP",
     "AfterToolCallHook",
+    "AsyncioTaskBackend",
     "BeforeToolCallHook",
     "BridgeConnectionError",
     "BridgeMessageTooLargeError",
@@ -59,9 +62,13 @@ __all__ = (
     "MCPResourceLink",
     "MCPStdioContext",
     "MCPTaskConfig",
+    "MCPTaskStore",
     "MCPToolResult",
     "MissingDependencyError",
     "OIDCProviderConfig",
+    "TaskExecutionBackend",
+    "TaskInvocation",
+    "TaskRecord",
     "TokenValidator",
     "__version__",
     "create_oidc_validator",
