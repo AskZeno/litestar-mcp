@@ -52,6 +52,8 @@ from litestar_mcp.registry import (
 from litestar_mcp.schema_builder import generate_schema_for_handler
 from litestar_mcp.task_backends import TaskExecutionBackend, TaskInvocation
 from litestar_mcp.tasks import MCPTaskStore, TaskLookupError
+from litestar_mcp.ui import UI_EXTENSION as APPS_EXTENSION
+from litestar_mcp.ui import UI_MIME_TYPE, UI_URI_SCHEME, client_ui_mime_types, normalized_ui_visibility
 from litestar_mcp.utils import (
     get_handler_function,
     get_mcp_metadata,
@@ -71,8 +73,6 @@ _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
-APPS_EXTENSION = "io.modelcontextprotocol/apps"
-UI_URI_SCHEME = "ui://"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 
 
@@ -160,8 +160,12 @@ def _is_resource_text_media_type(mime_type: "str") -> "bool":
     )
 
 
-def _resource_mime_type(handler: "BaseRouteHandler", config: "MCPConfig") -> "str":
-    """Resolve resource MIME metadata from opt keys or decorator metadata."""
+def _resource_mime_type(handler: "BaseRouteHandler", config: "MCPConfig", uri: "str | None" = None) -> "str":
+    """Resolve resource MIME metadata from opt keys or decorator metadata.
+
+    Undeclared ``ui://`` resources default to the SEP-1865 profile rather
+    than ``application/json`` — the scheme reserves them for MCP Apps.
+    """
     opt = getattr(handler, "opt", None) or {}
     opt_mime_type = opt.get(config.opt_keys.resource_mime_type)
     if isinstance(opt_mime_type, str) and opt_mime_type:
@@ -171,7 +175,20 @@ def _resource_mime_type(handler: "BaseRouteHandler", config: "MCPConfig") -> "st
     metadata_mime_type = metadata.get("mime_type")
     if isinstance(metadata_mime_type, str) and metadata_mime_type:
         return metadata_mime_type
+    if uri is not None and uri.startswith(UI_URI_SCHEME):
+        return UI_MIME_TYPE
     return "application/json"
+
+
+def _resource_ui_meta(handler: "BaseRouteHandler", config: "MCPConfig") -> "dict[str, Any] | None":
+    """The declared SEP-1865 ``_meta.ui`` payload for a resource, if any."""
+    fn = get_handler_function(handler)
+    metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+    declared = metadata.get("ui")
+    if not isinstance(declared, dict):
+        opt = getattr(handler, "opt", None) or {}
+        declared = opt.get(config.opt_keys.resource_ui)
+    return dict(declared) if isinstance(declared, dict) and declared else None
 
 
 def _resource_uri(name: "str", handler: "BaseRouteHandler", config: "MCPConfig") -> "str":
@@ -407,13 +424,33 @@ class MCPHandlerService:
             return ProgressReporter(progress_token, None)
         return ProgressReporter(progress_token, registry.publish_notification)
 
-    def _app_resource_visible(self, uri: "str", context: "RequestContext") -> "bool":
-        """``ui://`` resources exist only for capable clients of an apps-enabled server."""
-        if not uri.startswith(UI_URI_SCHEME):
-            return True
+    def _client_ui_capable(self, context: "RequestContext") -> "bool":
+        """SEP-1865 capability: declared mimeTypes must intersect the server's."""
         if self.apps_config is None:
             return False
-        return _client_has_extension(context, APPS_EXTENSION)
+        declared = client_ui_mime_types(context.client_capabilities)
+        return bool(set(declared) & set(self.apps_config.mime_types))
+
+    def _app_resource_visible(self, uri: "str", context: "RequestContext") -> "bool":
+        """``ui://`` resources exist only for ui-capable clients of an apps-enabled server."""
+        if not uri.startswith(UI_URI_SCHEME):
+            return True
+        return self._client_ui_capable(context)
+
+    def _tool_ui_meta(self, handler: "BaseRouteHandler", fn: "object") -> "dict[str, Any] | None":
+        """The SEP-1865 ``_meta.ui`` payload a tool declares, if any."""
+        metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+        opt = getattr(handler, "opt", None) or {}
+        resource_uri = metadata.get("ui_resource_uri") or opt.get(self.config.opt_keys.ui_resource_uri)
+        visibility = metadata.get("ui_visibility")
+        if visibility is None:
+            visibility = normalized_ui_visibility(opt.get(self.config.opt_keys.ui_visibility))
+        payload: dict[str, Any] = {}
+        if isinstance(resource_uri, str) and resource_uri:
+            payload["resourceUri"] = resource_uri
+        if visibility is not None:
+            payload["visibility"] = list(visibility)
+        return payload or None
 
     async def _execute_tool_call(
         self,
@@ -474,7 +511,7 @@ class MCPHandlerService:
         if self.task_config is not None:
             extensions[TASKS_EXTENSION] = {}
         if self.apps_config is not None:
-            extensions[APPS_EXTENSION] = {}
+            extensions[APPS_EXTENSION] = {"mimeTypes": list(self.apps_config.mime_types)}
         if extensions:
             capabilities["extensions"] = extensions
         result: dict[str, Any] = {
@@ -509,6 +546,9 @@ class MCPHandlerService:
                 annotations = tool_entry.get("annotations") or {}
                 annotations.setdefault("scopes", list(metadata["scopes"]))
                 tool_entry["annotations"] = annotations
+            ui_meta = self._tool_ui_meta(handler, fn)
+            if ui_meta is not None and self._client_ui_capable(context):
+                tool_entry["_meta"] = {"ui": ui_meta}
             tools.append(tool_entry)
         try:
             page, next_cursor = _paginate_list(tools, params, self.config.list_page_size)
@@ -631,9 +671,10 @@ class MCPHandlerService:
                 continue
 
             fn = get_handler_function(handler)
+            resource_uri = _resource_uri(name, handler, self.config)
             resources.append(
                 {
-                    "uri": _resource_uri(name, handler, self.config),
+                    "uri": resource_uri,
                     "name": name,
                     "description": render_description(
                         handler,
@@ -642,7 +683,7 @@ class MCPHandlerService:
                         fallback_name=name,
                         opt_keys=self.config.opt_keys,
                     ),
-                    "mimeType": _resource_mime_type(handler, self.config),
+                    "mimeType": _resource_mime_type(handler, self.config, resource_uri),
                 }
             )
         try:
@@ -676,7 +717,7 @@ class MCPHandlerService:
                         fallback_name=entry.name,
                         opt_keys=self.config.opt_keys,
                     ),
-                    "mimeType": _resource_mime_type(entry.handler, self.config),
+                    "mimeType": _resource_mime_type(entry.handler, self.config, entry.template),
                 }
             )
         try:
@@ -745,12 +786,15 @@ class MCPHandlerService:
                 content = _resource_content_from_response(
                     uri,
                     response,
-                    fallback_mime_type=_resource_mime_type(handler, self.config),
+                    fallback_mime_type=_resource_mime_type(handler, self.config, uri),
                     max_blob_bytes=self.config.max_blob_bytes,
                 )
             except ValueError as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
 
+            ui_meta = _resource_ui_meta(handler, self.config)
+            if ui_meta is not None:
+                content.setdefault("_meta", {})["ui"] = ui_meta
             return {"contents": [content]}
 
         template_entries = self.registry.templates.values() if self.registry is not None else ()
@@ -784,12 +828,15 @@ class MCPHandlerService:
                 content = _resource_content_from_response(
                     uri,
                     response,
-                    fallback_mime_type=_resource_mime_type(entry.handler, self.config),
+                    fallback_mime_type=_resource_mime_type(entry.handler, self.config, uri),
                     max_blob_bytes=self.config.max_blob_bytes,
                 )
             except ValueError as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
 
+            ui_meta = _resource_ui_meta(entry.handler, self.config)
+            if ui_meta is not None:
+                content.setdefault("_meta", {})["ui"] = ui_meta
             return {"contents": [content]}
 
         raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))

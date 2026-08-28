@@ -85,6 +85,9 @@ class MCPOptKeys:
     """
 
     tool: "str" = "mcp_tool"
+    ui_resource_uri: "str" = "mcp_ui_resource_uri"
+    ui_visibility: "str" = "mcp_ui_visibility"
+    resource_ui: "str" = "mcp_resource_ui"
     resource: "str" = "mcp_resource"
     resource_uri: "str" = "mcp_resource_uri"
     resource_mime_type: "str" = "mcp_resource_mime_type"
@@ -155,14 +158,24 @@ def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | Non
 
 @dataclass
 class MCPAppsConfig:
-    """Configuration for the opt-in MCP Apps extension.
+    """Configuration for the opt-in MCP Apps extension (SEP-1865).
 
     Apps are interactive resources declared under the ``ui://`` URI
-    scheme. Enabling apps advertises the extension in ``server/discover``
-    and exposes declared ``ui://`` resources to clients that themselves
-    advertise the extension; disabled, declared app resources resolve
-    inert (hidden) rather than invalid.
+    scheme. Enabling apps advertises ``io.modelcontextprotocol/ui`` with
+    the ``mimeTypes`` settings in ``server/discover`` and exposes declared
+    ``ui://`` resources to clients whose declared mimeTypes intersect;
+    disabled, declared app resources resolve inert (hidden) rather than
+    invalid.
     """
+
+    mime_types: "tuple[str, ...]" = ("text/html;profile=mcp-app",)
+    """Content types this server can deliver; SEP-1865's initial profile
+    is the default and currently the only standardized value."""
+
+    def __post_init__(self) -> "None":
+        if not self.mime_types or any(not value.strip() for value in self.mime_types):
+            msg = "apps mime_types must be a non-empty tuple of content types"
+            raise ValueError(msg)
 
 
 def normalize_apps_config(value: "bool | MCPAppsConfig") -> "MCPAppsConfig | None":

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from litestar_mcp.config import MCPOptKeys
+from litestar_mcp.ui import normalized_ui_visibility
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
@@ -153,6 +154,8 @@ def mcp_tool(
     scopes: "list[str] | None" = None,
     task_support: "str | None" = None,
     task_input_before_start: "bool" = False,
+    ui_resource_uri: "str | None" = None,
+    ui_visibility: "list[str] | None" = None,
 ) -> "Callable[[F], F]":
     """Decorator to mark a route handler as an MCP tool.
 
@@ -181,6 +184,12 @@ def mcp_tool(
         task_input_before_start: Execute the first call synchronously so an
             MRTR input-required result can be completed before creating the
             task on the retry.
+        ui_resource_uri: Optional ``ui://`` resource this tool renders
+            through (SEP-1865 ``_meta.ui.resourceUri``); the resource must
+            be declared on this server.
+        ui_visibility: Optional SEP-1865 visibility list drawn from
+            ``model``/``app``; omitted means the spec default
+            ``["model", "app"]``.
 
     Returns:
         Decorator function that adds MCP metadata to the handler.
@@ -228,6 +237,11 @@ def mcp_tool(
             metadata["task_support"] = task_support
         if task_input_before_start:
             metadata["task_input_before_start"] = True
+        if ui_resource_uri is not None:
+            metadata["ui_resource_uri"] = ui_resource_uri
+        visibility = normalized_ui_visibility(ui_visibility)
+        if visibility is not None:
+            metadata["ui_visibility"] = list(visibility)
         _REGISTRY.set(fn, metadata)
         return fn
 
@@ -243,6 +257,7 @@ def mcp_resource(
     agent_instructions: "str | None" = None,
     when_to_use: "str | None" = None,
     returns: "str | None" = None,
+    ui: "dict[str, Any] | None" = None,
 ) -> "Callable[[F], F]":
     """Decorator to mark a route handler as an MCP resource.
 
@@ -261,6 +276,10 @@ def mcp_resource(
             ``## When to use`` section.
         returns: Optional return-shape hint rendered as the ``## Returns``
             section.
+        ui: Optional SEP-1865 ``_meta.ui`` payload for a ``ui://``
+            resource (``csp``, ``permissions``, ``domain``,
+            ``prefersBorder``); passed through verbatim on
+            ``resources/read``.
 
     Returns:
         Decorator function that adds MCP metadata to the handler.
@@ -303,6 +322,8 @@ def mcp_resource(
             metadata["when_to_use"] = when_to_use
         if returns is not None:
             metadata["returns"] = returns
+        if ui is not None:
+            metadata["ui"] = dict(ui)
         _REGISTRY.set(fn, metadata)
         return fn
 

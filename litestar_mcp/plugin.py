@@ -18,6 +18,7 @@ from litestar_mcp.schema_builder import generate_schema_for_handler, validate_mc
 from litestar_mcp.sse import SubscriptionManager
 from litestar_mcp.task_backends import AsyncioTaskBackend, TaskExecutionBackend
 from litestar_mcp.tasks import MCPTaskStore, TaskRecord
+from litestar_mcp.ui import UI_URI_SCHEME
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
 
 _logger = logging.getLogger(__name__)
@@ -220,6 +221,8 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._discover_mcp_routes(all_handlers)
         for handler in self._registry.tools.values():
             validate_mcp_header_schema(generate_schema_for_handler(handler))
+        if self._config.apps_config is not None:
+            self._validate_ui_contract()
 
         def invalidate_router() -> "None":
             _logger.debug("invalidate_router callback triggered")
@@ -242,6 +245,47 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         await self._subscription_manager.close_all()
         if self._task_backend is not None:
             await self._task_backend.close()
+
+    def _validate_ui_contract(self) -> "None":
+        """SEP-1865 startup validation: linkage resolves, ui:// carries the profile.
+
+        Fails app startup loudly — a ui-linked tool whose template does not
+        exist, or a ``ui://`` resource outside the configured content types,
+        is a defect no request should ever observe.
+        """
+        from litestar_mcp.services.handler import _resource_mime_type, _resource_uri
+
+        apps_config = self._config.apps_config
+        if apps_config is None:  # pragma: no cover - guarded by the caller
+            return
+        declared: dict[str, str] = {}
+        for name, handler in self._registry.resources.items():
+            uri = _resource_uri(name, handler, self._config)
+            if uri.startswith(UI_URI_SCHEME):
+                declared[uri] = _resource_mime_type(handler, self._config, uri)
+        for entry in self._registry.templates.values():
+            if entry.template.startswith(UI_URI_SCHEME):
+                declared[entry.template] = _resource_mime_type(entry.handler, self._config, entry.template)
+        allowed = set(apps_config.mime_types)
+        for uri, mime_type in declared.items():
+            if mime_type not in allowed:
+                msg = (
+                    f"ui resource {uri!r} declares mimeType {mime_type!r}; SEP-1865 requires one of {sorted(allowed)!r}"
+                )
+                raise ValueError(msg)
+        for name, handler in self._registry.tools.items():
+            fn = get_handler_function(handler)
+            metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+            opt = getattr(handler, "opt", None) or {}
+            resource_uri = metadata.get("ui_resource_uri") or opt.get(self._config.opt_keys.ui_resource_uri)
+            if resource_uri is None:
+                continue
+            if not isinstance(resource_uri, str) or not resource_uri.startswith(UI_URI_SCHEME):
+                msg = f"tool {name!r} declares ui resource {resource_uri!r}; it must use the ui:// scheme"
+                raise ValueError(msg)
+            if resource_uri not in declared:
+                msg = f"tool {name!r} links ui resource {resource_uri!r}, which is not declared by this server"
+                raise ValueError(msg)
 
     def _discover_mcp_routes(self, route_handlers: "Sequence[Any]") -> "None":
         """Discover routes marked for MCP exposure via opt attribute or decorators."""
