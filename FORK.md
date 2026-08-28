@@ -37,6 +37,23 @@ upstream change rebases this branch smaller.
 | Progress notifications: `params._meta.progressToken` threads into tool execution; `ProgressReporter` emits `notifications/progress` (kind detail in `_meta`) from tools and task backends | (s2) | PR candidate |
 | MCP Apps extension: `MCPConfig.apps` handshake (`io.modelcontextprotocol/apps`); `ui://` resources visible only to capable clients of an apps-enabled server, inert otherwise | (s3) | PR candidate (waits on upstream apps posture) |
 
+## Upstream offering (ADR-0087 s8)
+
+Two PR-ready branches are rebased onto ``upstream/main`` and kept green
+against the full upstream suite:
+
+- ``upstream/task-backend-seam`` — the execution-backend split
+  (record persistence + ``record_status`` vs ``TaskExecutionBackend``,
+  ``AsyncioTaskBackend`` default). Behavioral no-op for existing users;
+  the pre-existing tasks suite passes unmodified.
+- ``upstream/progress-notifications`` — ``progressToken`` threading and
+  ``notifications/progress`` emission from tools and task backends
+  (stacked on the seam branch).
+
+Pull requests against ``cofin/litestar-mcp`` open once the deltas have
+baked in production (plan s8); any accepted change rebases ``zeno``
+smaller. The apps extension waits on upstream's own apps posture.
+
 ## Constraints
 
 - The fork stays free of zeno-specific types and never imports a workflow
