@@ -35,6 +35,7 @@ upstream change rebases this branch smaller.
 | CI triggers include `zeno`; fork docs | (bootstrap) | not for upstream |
 | Pluggable task execution backend: `MCPTaskStore` keeps records + `record_status`; `TaskExecutionBackend` (`start`/`cancel`/`deliver_input`) owns execution; `AsyncioTaskBackend` default preserves 0.13.0 behavior | (s1) | PR candidate |
 | Progress notifications: `params._meta.progressToken` threads into tool execution; `ProgressReporter` emits `notifications/progress` (kind detail in `_meta`) from tools and task backends | (s2) | PR candidate |
+| MCP Apps extension: `MCPConfig.apps` handshake (`io.modelcontextprotocol/apps`); `ui://` resources visible only to capable clients of an apps-enabled server, inert otherwise | (s3) | PR candidate (waits on upstream apps posture) |
 
 ## Constraints
 

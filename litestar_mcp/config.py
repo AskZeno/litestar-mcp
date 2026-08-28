@@ -154,6 +154,27 @@ def normalize_task_config(value: "bool | MCPTaskConfig") -> "MCPTaskConfig | Non
 
 
 @dataclass
+class MCPAppsConfig:
+    """Configuration for the opt-in MCP Apps extension.
+
+    Apps are interactive resources declared under the ``ui://`` URI
+    scheme. Enabling apps advertises the extension in ``server/discover``
+    and exposes declared ``ui://`` resources to clients that themselves
+    advertise the extension; disabled, declared app resources resolve
+    inert (hidden) rather than invalid.
+    """
+
+
+def normalize_apps_config(value: "bool | MCPAppsConfig") -> "MCPAppsConfig | None":
+    """Normalize apps configuration into a concrete config object."""
+    if value is False:
+        return None
+    if value is True:
+        return MCPAppsConfig()
+    return value
+
+
+@dataclass
 class MCPConfig:
     """Configuration for the Litestar MCP Plugin.
 
@@ -207,6 +228,7 @@ class MCPConfig:
     exclude_tags: "list[str] | None" = None
     auth: "MCPAuthConfig | None" = None
     tasks: "bool | MCPTaskConfig" = False
+    apps: "bool | MCPAppsConfig" = False
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
     cache_ttl_ms: "int" = 0
     cache_scope: "Literal['private', 'public']" = "private"
@@ -237,6 +259,11 @@ class MCPConfig:
         if self.subscription_keepalive_seconds <= 0:
             msg = f"subscription_keepalive_seconds must be positive, got {self.subscription_keepalive_seconds}"
             raise ValueError(msg)
+
+    @property
+    def apps_config(self) -> "MCPAppsConfig | None":
+        """The normalized apps configuration, or ``None`` when disabled."""
+        return normalize_apps_config(self.apps)
 
     @property
     def task_config(self) -> "MCPTaskConfig | None":

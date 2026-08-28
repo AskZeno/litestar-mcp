@@ -25,7 +25,14 @@ from litestar_mcp.auth import (
     TokenValidator,
     create_oidc_validator,
 )
-from litestar_mcp.config import AfterToolCallHook, BeforeToolCallHook, MCPConfig, MCPOptKeys, MCPTaskConfig
+from litestar_mcp.config import (
+    AfterToolCallHook,
+    BeforeToolCallHook,
+    MCPAppsConfig,
+    MCPConfig,
+    MCPOptKeys,
+    MCPTaskConfig,
+)
 from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.exceptions import (
     BridgeConnectionError,
@@ -52,6 +59,7 @@ __all__ = (
     "JWKSCache",
     "LitestarMCP",
     "LitestarMCPError",
+    "MCPAppsConfig",
     "MCPAuthBackend",
     "MCPAuthConfig",
     "MCPBlobResource",

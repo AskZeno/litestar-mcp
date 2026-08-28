@@ -71,6 +71,8 @@ _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+APPS_EXTENSION = "io.modelcontextprotocol/apps"
+UI_URI_SCHEME = "ui://"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 
 
@@ -397,12 +399,21 @@ class MCPHandlerService:
         self.task_store = task_store
         self.task_backend = task_backend
         self.task_config = config.task_config
+        self.apps_config = config.apps_config
 
     def _progress_reporter(self, progress_token: "str | int | None") -> "ProgressReporter":
         registry = self.registry
         if registry is None or progress_token is None:
             return ProgressReporter(progress_token, None)
         return ProgressReporter(progress_token, registry.publish_notification)
+
+    def _app_resource_visible(self, uri: "str", context: "RequestContext") -> "bool":
+        """``ui://`` resources exist only for capable clients of an apps-enabled server."""
+        if not uri.startswith(UI_URI_SCHEME):
+            return True
+        if self.apps_config is None:
+            return False
+        return _client_has_extension(context, APPS_EXTENSION)
 
     async def _execute_tool_call(
         self,
@@ -459,8 +470,13 @@ class MCPHandlerService:
         }
         if self.discovered_prompts:
             capabilities["prompts"] = {"listChanged": True}
+        extensions: dict[str, Any] = {}
         if self.task_config is not None:
-            capabilities["extensions"] = {TASKS_EXTENSION: {}}
+            extensions[TASKS_EXTENSION] = {}
+        if self.apps_config is not None:
+            extensions[APPS_EXTENSION] = {}
+        if extensions:
+            capabilities["extensions"] = extensions
         result: dict[str, Any] = {
             "supportedVersions": [MCP_PROTOCOL_VERSION],
             "capabilities": capabilities,
@@ -611,6 +627,8 @@ class MCPHandlerService:
             handler_tags = set(getattr(handler, "tags", None) or [])
             if not should_include_handler(name, handler_tags, self.config):
                 continue
+            if not self._app_resource_visible(_resource_uri(name, handler, self.config), context):
+                continue
 
             fn = get_handler_function(handler)
             resources.append(
@@ -643,6 +661,8 @@ class MCPHandlerService:
         for entry in self.registry.templates.values():
             handler_tags = set(getattr(entry.handler, "tags", None) or [])
             if not should_include_handler(entry.name, handler_tags, self.config):
+                continue
+            if not self._app_resource_visible(entry.template, context):
                 continue
             fn = get_handler_function(entry.handler)
             templates.append(
@@ -698,6 +718,8 @@ class MCPHandlerService:
             resource_name, handler = resource_match
             handler_tags = set(getattr(handler, "tags", None) or [])
             if not should_include_handler(resource_name, handler_tags, self.config):
+                raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+            if not self._app_resource_visible(uri, context):
                 raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
             try:
@@ -963,9 +985,13 @@ class MCPHandlerService:
         return {}
 
 
-def _require_tasks_capability(context: "RequestContext") -> None:
+def _client_has_extension(context: "RequestContext", extension: "str") -> "bool":
     extensions = (context.client_capabilities or {}).get("extensions")
-    if not isinstance(extensions, dict) or TASKS_EXTENSION not in extensions:
+    return isinstance(extensions, dict) and extension in extensions
+
+
+def _require_tasks_capability(context: "RequestContext") -> None:
+    if not _client_has_extension(context, TASKS_EXTENSION):
         raise JSONRPCErrorException(
             JSONRPCError(
                 code=MISSING_REQUIRED_CLIENT_CAPABILITY,
