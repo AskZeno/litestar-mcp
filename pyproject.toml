@@ -35,7 +35,7 @@ maintainers = [
 name = "litestar-mcp"
 readme = "README.md"
 requires-python = ">=3.10"
-version = "0.13.0"
+version = "0.13.0+zeno.1"
 
 [project.urls]
 Changelog = "https://cofin.github.io/litestar-mcp/latest/changelog"
