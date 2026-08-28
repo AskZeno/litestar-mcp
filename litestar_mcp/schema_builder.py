@@ -22,12 +22,7 @@ from litestar_mcp.utils.handler_signature import (
     _unwrap_annotated,
     get_advertised_handler_parameters,
 )
-from litestar_mcp.validation import (
-    MsgspecToolTypeAdapter,
-    ToolTypeAdapter,
-    resolve_type_adapters,
-    type_adapter_for,
-)
+from litestar_mcp.validation import ToolTypeAdapter, resolve_type_adapters, type_adapter_for
 
 if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
@@ -239,11 +234,9 @@ def generate_schema_for_handler(
 
     for param in advertised_params:
         prop_schema = type_to_json_schema(param.annotation, adapters)
-        owner = type_adapter_for(param.annotation, adapters)
-        if not isinstance(owner, MsgspecToolTypeAdapter):
-            nested_definitions = prop_schema.pop("$defs", None)
-            if isinstance(nested_definitions, dict):
-                definitions.update(nested_definitions)
+        nested_definitions = prop_schema.pop("$defs", None)
+        if isinstance(nested_definitions, dict):
+            definitions.update(nested_definitions)
         _, metas = _unwrap_annotated(param.annotation)
         if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
             prop_schema["const"] = param.default

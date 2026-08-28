@@ -536,10 +536,10 @@ class TestMsgspecAsHandlerParam:
         schema = generate_schema_for_handler(handler)
 
         payload_schema = schema["properties"]["payload"]
-        # msgspec.json.schema emits a $ref into $defs.
-        assert "$defs" in payload_schema
-        assert "HandlerPayload" in payload_schema["$defs"]
-        target = payload_schema["$defs"]["HandlerPayload"]
+        # Definitions live at the tool root so #/$defs references are valid.
+        assert payload_schema["$ref"] == "#/$defs/HandlerPayload"
+        assert "HandlerPayload" in schema["$defs"]
+        target = schema["$defs"]["HandlerPayload"]
         assert target["type"] == "object"
         assert "name" in target["properties"]
         assert "count" in target["properties"]
@@ -556,9 +556,9 @@ class TestMsgspecAsHandlerParam:
 
         assert schema["required"] == ["data"]
         data_schema = schema["properties"]["data"]
-        assert "$defs" in data_schema
-        assert "CreatePayload" in data_schema["$defs"]
-        payload_schema = data_schema["$defs"]["CreatePayload"]
+        assert data_schema["$ref"] == "#/$defs/CreatePayload"
+        assert "CreatePayload" in schema["$defs"]
+        payload_schema = schema["$defs"]["CreatePayload"]
         assert payload_schema["properties"]["title"]["type"] == "string"
         assert payload_schema["properties"]["count"]["type"] == "integer"
         assert payload_schema["required"] == ["title"]
