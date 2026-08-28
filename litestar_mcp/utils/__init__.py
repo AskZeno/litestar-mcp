@@ -258,6 +258,7 @@ def mcp_resource(
     when_to_use: "str | None" = None,
     returns: "str | None" = None,
     ui: "dict[str, Any] | None" = None,
+    completions: "dict[str, Callable[..., Any]] | None" = None,
 ) -> "Callable[[F], F]":
     """Decorator to mark a route handler as an MCP resource.
 
@@ -280,6 +281,9 @@ def mcp_resource(
             resource (``csp``, ``permissions``, ``domain``,
             ``prefersBorder``); passed through verbatim on
             ``resources/read``.
+        completions: Optional mapping from template argument name to a
+            sync or async callable accepting ``(value, context_arguments)``
+            and returning completion strings.
 
     Returns:
         Decorator function that adds MCP metadata to the handler.
@@ -324,6 +328,8 @@ def mcp_resource(
             metadata["returns"] = returns
         if ui is not None:
             metadata["ui"] = dict(ui)
+        if completions is not None:
+            metadata["completions"] = dict(completions)
         _REGISTRY.set(fn, metadata)
         return fn
 
@@ -337,6 +343,7 @@ def mcp_prompt(
     description: "str | None" = None,
     arguments: "list[dict[str, Any]] | None" = None,
     icons: "list[dict[str, Any]] | None" = None,
+    completions: "dict[str, Callable[..., Any]] | None" = None,
 ) -> "Callable[[F], F]":
     r"""Decorator to mark a callable as an MCP prompt template.
 
@@ -368,6 +375,9 @@ def mcp_prompt(
         icons: Optional list of icon objects for UI display. Each entry is a
             dict with ``src`` (URL), ``mimeType``, and optionally ``sizes``
             per the MCP spec.
+        completions: Optional mapping from prompt argument name to a sync
+            or async callable accepting ``(value, context_arguments)`` and
+            returning completion strings.
 
     Returns:
         Decorator function that adds MCP metadata to the callable.
@@ -393,6 +403,8 @@ def mcp_prompt(
             metadata["arguments"] = arguments
         if icons is not None:
             metadata["icons"] = icons
+        if completions is not None:
+            metadata["completions"] = dict(completions)
         _REGISTRY.set(fn, metadata)
         return fn
 

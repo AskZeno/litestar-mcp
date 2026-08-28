@@ -459,6 +459,7 @@ class MCP:
         *,
         name: "str | None" = None,
         mime_type: "str | None" = None,
+        completions: "dict[str, Callable[..., Any]] | None" = None,
         after_request: "AfterRequestHookHandler | None" = None,
         after_response: "AfterResponseHookHandler | None" = None,
         background: "BackgroundTask | BackgroundTasks | None" = None,
@@ -526,6 +527,7 @@ class MCP:
                     default_opt={
                         opt_keys.resource_description: description or fn.__doc__ or "",
                         opt_keys.resource_mime_type: mime_type,
+                        opt_keys.resource_completions: completions,
                     },
                 ),
             )(_json_response_wrapper(fn))
@@ -538,6 +540,7 @@ class MCP:
         self,
         name: "str | None" = None,
         *,
+        completions: "dict[str, Callable[..., Any]] | None" = None,
         after_request: "AfterRequestHookHandler | None" = None,
         after_response: "AfterResponseHookHandler | None" = None,
         background: "BackgroundTask | BackgroundTasks | None" = None,
@@ -596,7 +599,10 @@ class MCP:
                 **_build_standalone_route_kwargs(
                     route_kwargs,
                     forced_opt={opt_keys.prompt: prompt_name},
-                    default_opt={opt_keys.prompt_description: description or fn.__doc__ or ""},
+                    default_opt={
+                        opt_keys.prompt_description: description or fn.__doc__ or "",
+                        opt_keys.prompt_completions: completions,
+                    },
                 ),
             )(_json_response_wrapper(fn))
             self.plugin.register_dynamic_handler(handler)

@@ -63,6 +63,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                     description=metadata.get("description"),
                     arguments=metadata.get("arguments"),
                     icons=metadata.get("icons"),
+                    completions=metadata.get("completions"),
                 )
         self._subscription_manager = SubscriptionManager(
             max_streams=self._config.subscription_max_streams,
@@ -302,7 +303,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                         self._registry.register_resource(metadata["name"], handler)
                         template = metadata.get("resource_template")
                         if template is not None:
-                            self._registry.register_resource_template(metadata["name"], handler, template)
+                            self._registry.register_resource_template(
+                                metadata["name"],
+                                handler,
+                                template,
+                                completions=metadata.get("completions"),
+                            )
                     elif metadata["type"] == "prompt":
                         self._registry.register_prompt_handler(
                             metadata["name"],
@@ -311,6 +317,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                             description=metadata.get("description"),
                             arguments=metadata.get("arguments"),
                             icons=metadata.get("icons"),
+                            completions=metadata.get("completions"),
                         )
                 elif handler.opt:
                     tool_key = self._config.opt_keys.tool
@@ -324,7 +331,12 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                         self._registry.register_resource(resource_name, handler)
                         opt_template = handler.opt.get(template_key)
                         if isinstance(opt_template, str):
-                            self._registry.register_resource_template(resource_name, handler, opt_template)
+                            self._registry.register_resource_template(
+                                resource_name,
+                                handler,
+                                opt_template,
+                                completions=handler.opt.get(self._config.opt_keys.resource_completions),
+                            )
                     if prompt_key in handler.opt:
                         opt_keys = self._config.opt_keys
                         self._registry.register_prompt_handler(
@@ -334,6 +346,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
                             description=handler.opt.get(opt_keys.prompt_description),
                             arguments=handler.opt.get(opt_keys.prompt_arguments),
                             icons=handler.opt.get(opt_keys.prompt_icons),
+                            completions=handler.opt.get(opt_keys.prompt_completions),
                         )
 
             if getattr(handler, "route_handlers", None):

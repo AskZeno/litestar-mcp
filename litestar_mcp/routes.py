@@ -311,7 +311,8 @@ def _build_cached_router(
     router.register("resources/list", lambda params, ctx: service().resources_list(params, ctx))
     router.register("resources/templates/list", lambda params, ctx: service().resources_templates_list(params, ctx))
     router.register("resources/read", lambda params, ctx: service().resources_read(params, ctx))
-    router.register("completion/complete", lambda params, ctx: service().completion_complete(params, ctx))
+    if registry.has_completers:
+        router.register("completion/complete", lambda params, ctx: service().completion_complete(params, ctx))
     router.register("prompts/list", lambda params, ctx: service().prompts_list(params, ctx))
     router.register("prompts/get", lambda params, ctx: service().prompts_get(params, ctx))
     if task_store is not None and config.task_config is not None:

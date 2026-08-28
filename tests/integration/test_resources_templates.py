@@ -1,9 +1,4 @@
-"""MCP 2026-07-28 resource-templates + completion/complete flows.
-
-Ch4 of ``v0.5.0-consumer-readiness`` adds RFC 6570 Level 1 URI templates to
-``@mcp_resource`` + ``mcp_resource_template`` opt-key, plus the
-``resources/templates/list`` and ``completion/complete`` JSON-RPC methods.
-"""
+"""MCP 2026-07-28 resource-template declaration and dispatch flows."""
 
 from typing import Any
 
@@ -84,7 +79,7 @@ async def test_resources_read_unknown_uri_returns_error() -> "None":
 
 
 @pytest.mark.anyio
-async def test_completion_complete_returns_empty_default_for_registered_template() -> "None":
+async def test_template_without_a_completer_does_not_register_completion_method() -> "None":
     @get(
         "/wf/{wid:str}",
         mcp_resource="wf",
@@ -100,18 +95,18 @@ async def test_completion_complete_returns_empty_default_for_registered_template
             "completion/complete",
             {"ref": {"type": "ref/resource", "uri": "app://w/{wid}"}, "argument": {"name": "wid", "value": "ab"}},
         )
-        assert resp["result"]["completion"] == {"values": [], "total": 0, "hasMore": False}
+        assert resp["error"]["code"] == -32601
 
 
 @pytest.mark.anyio
-async def test_completion_complete_returns_empty_for_unknown_ref() -> "None":
+async def test_server_without_any_completer_rejects_completion_as_method_not_found() -> "None":
     async with AsyncTestClient(app=_app()) as client:
         resp = await _rpc(
             client,
             "completion/complete",
             {"ref": {"type": "ref/resource", "uri": "app://unknown"}, "argument": {"name": "x", "value": ""}},
         )
-        assert resp["result"]["completion"] == {"values": [], "total": 0, "hasMore": False}
+        assert resp["error"]["code"] == -32601
 
 
 @pytest.mark.anyio

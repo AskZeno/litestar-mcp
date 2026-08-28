@@ -75,6 +75,7 @@ _logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2026-07-28"
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
+_MAX_COMPLETION_VALUES = 100
 
 
 @dataclass
@@ -508,6 +509,8 @@ class MCPHandlerService:
         }
         if self.discovered_prompts:
             capabilities["prompts"] = {"listChanged": True}
+        if self.registry is not None and self.registry.has_completers:
+            capabilities["completions"] = {}
         extensions: dict[str, Any] = {}
         if self.task_config is not None:
             extensions[TASKS_EXTENSION] = {}
@@ -843,7 +846,76 @@ class MCPHandlerService:
         raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
     async def completion_complete(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
-        return {"completion": {"values": [], "total": 0, "hasMore": False}}
+        """Resolve one registered prompt/resource-template argument completer."""
+        ref = params.get("ref")
+        argument = params.get("argument")
+        if not isinstance(ref, dict) or not isinstance(argument, dict):
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="Completion ref and argument must be objects")
+            )
+        argument_name = argument.get("name")
+        argument_value = argument.get("value")
+        if not isinstance(argument_name, str) or not isinstance(argument_value, str):
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="Completion argument name and value must be strings")
+            )
+
+        completer: Any = None
+        ref_type = ref.get("type")
+        if ref_type == "ref/prompt":
+            prompt_name = ref.get("name")
+            registration = self.discovered_prompts.get(prompt_name) if isinstance(prompt_name, str) else None
+            if registration is not None and should_include_prompt(registration, self.config):
+                completer = registration.completions.get(argument_name)
+        elif ref_type == "ref/resource":
+            uri_template = ref.get("uri")
+            if isinstance(uri_template, str) and self.registry is not None:
+                for entry in self.registry.templates.values():
+                    if entry.template != uri_template:
+                        continue
+                    handler_tags = set(getattr(entry.handler, "tags", None) or [])
+                    if should_include_handler(entry.name, handler_tags, self.config) and self._app_resource_visible(
+                        entry.template, context
+                    ):
+                        completer = entry.completions.get(argument_name)
+                    break
+        else:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message=f"Unknown completion reference type: {ref_type!r}")
+            )
+
+        if completer is None:
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="Unknown completion reference or argument")
+            )
+
+        completion_context = params.get("context", {})
+        if not isinstance(completion_context, dict):
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="Completion context must be an object")
+            )
+        context_arguments = completion_context.get("arguments", {})
+        if not isinstance(context_arguments, dict) or not all(
+            isinstance(name, str) and isinstance(value, str) for name, value in context_arguments.items()
+        ):
+            raise JSONRPCErrorException(
+                JSONRPCError(code=INVALID_PARAMS, message="Completion context arguments must be string pairs")
+            )
+
+        values = completer(argument_value, dict(context_arguments))
+        if inspect.isawaitable(values):
+            values = await values
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            msg = "Completion providers must return list[str]"
+            raise TypeError(msg)
+        total = len(values)
+        return {
+            "completion": {
+                "values": values[:_MAX_COMPLETION_VALUES],
+                "total": total,
+                "hasMore": total > _MAX_COMPLETION_VALUES,
+            }
+        }
 
     async def prompts_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         prompts = [

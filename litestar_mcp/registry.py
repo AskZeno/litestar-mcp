@@ -2,7 +2,7 @@
 
 import inspect
 import logging
-from collections.abc import Callable  # noqa: TC003
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +30,10 @@ _logger = logging.getLogger(__name__)
 # Every MCP content block carries a ``type`` and the
 # variant-specific payload keys listed here. Used by ``_normalize_prompt_result``
 # to validate dict-shaped messages without silently coercing them to text.
+CompletionProvider = Callable[[str, "dict[str, str]"], Any]
+"""Sync or async ``(value, context_arguments) -> list[str]`` completer."""
+
+
 _PROMPT_CONTENT_REQUIRED_KEYS: "dict[str, frozenset[str]]" = {
     "text": frozenset({"text"}),
     "image": frozenset({"data", "mimeType"}),
@@ -56,6 +60,7 @@ class ResourceTemplate:
     name: "str"
     template: "str"
     handler: "BaseRouteHandler"
+    completions: "dict[str, CompletionProvider]" = field(default_factory=dict, hash=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +93,7 @@ class PromptRegistration:
     description: "str | None" = None
     arguments: "list[dict[str, Any]] | None" = field(default=None, hash=False)
     icons: "list[dict[str, Any]] | None" = field(default=None, hash=False)
+    completions: "dict[str, CompletionProvider]" = field(default_factory=dict, hash=False)
 
     def __post_init__(self) -> "None":
         if self.fn is not None and self.handler is not None:
@@ -397,7 +403,14 @@ class Registry:
         """Get registered resource templates, keyed by resource name."""
         return self._templates
 
-    def register_resource_template(self, name: "str", handler: "BaseRouteHandler", template: "str") -> "None":
+    def register_resource_template(
+        self,
+        name: "str",
+        handler: "BaseRouteHandler",
+        template: "str",
+        *,
+        completions: "dict[str, CompletionProvider] | None" = None,
+    ) -> "None":
         """Register an RFC 6570 Level 1 URI template for a resource.
 
         Args:
@@ -405,15 +418,27 @@ class Registry:
             handler: The route handler bound to the template.
             template: The URI template string. Validated at registration;
                 invalid templates raise :class:`ValueError`.
+            completions: Optional argument-name to completion-provider mapping.
         """
         parse_template(template)
+        declared_completions = dict(completions or {})
         existing = self._templates.get(name)
         if existing is not None and _same_handler(existing.handler, handler) and existing.template == template:
-            self._templates[name] = ResourceTemplate(name=name, template=template, handler=handler)
+            self._templates[name] = ResourceTemplate(
+                name=name,
+                template=template,
+                handler=handler,
+                completions=declared_completions,
+            )
             return
         if name in self._templates:
             _logger.warning("Overwriting existing resource template registration: %s", name)
-        self._templates[name] = ResourceTemplate(name=name, template=template, handler=handler)
+        self._templates[name] = ResourceTemplate(
+            name=name,
+            template=template,
+            handler=handler,
+            completions=declared_completions,
+        )
         self._trigger_change()
 
     @property
@@ -430,18 +455,9 @@ class Registry:
         description: "str | None" = None,
         arguments: "list[dict[str, Any]] | None" = None,
         icons: "list[dict[str, Any]] | None" = None,
+        completions: "dict[str, CompletionProvider] | None" = None,
     ) -> "None":
-        """Register a standalone prompt function.
-
-        Args:
-            name: Unique prompt identifier.
-            fn: The callable to invoke on ``prompts/get``.
-            title: Optional human-readable display name.
-            description: Optional description. Falls back to ``fn.__doc__``.
-            arguments: Explicit argument definitions. When ``None``, derived
-                from the function signature.
-            icons: Optional list of icon objects for UI display.
-        """
+        """Register a standalone prompt function and its argument completers."""
         if name in self._prompts:
             _logger.warning("Overwriting existing prompt registration: %s", name)
         desc = description
@@ -456,6 +472,7 @@ class Registry:
             description=desc,
             arguments=arguments,
             icons=icons,
+            completions=dict(completions or {}),
         )
         self._trigger_change()
 
@@ -468,28 +485,9 @@ class Registry:
         description: "str | None" = None,
         arguments: "list[dict[str, Any]] | None" = None,
         icons: "list[dict[str, Any]] | None" = None,
+        completions: "dict[str, CompletionProvider] | None" = None,
     ) -> "None":
-        """Register a route-handler-based prompt.
-
-        Storage only — runtime dispatch and the
-        ``messages``-passthrough vs. normalize-on-return decision live in
-        :func:`litestar_mcp.routes.handle_prompts_get`. This function
-        captures the handler reference plus any explicit overrides so the
-        registry can render ``prompts/list`` entries without executing
-        the handler.
-
-        Args:
-            name: Unique prompt identifier.
-            handler: The Litestar route handler.
-            title: Optional human-readable display name.
-            description: Optional description.
-            arguments: Explicit argument definitions. When ``None``,
-                arguments are introspected from the handler's
-                parsed handler signature at ``prompts/list`` render time
-                (DI- and framework-injected parameters filtered out).
-                Pass ``[]`` to advertise no arguments explicitly.
-            icons: Optional list of icon objects for UI display.
-        """
+        """Register a route-handler-based prompt and its argument completers."""
         if name in self._prompts:
             _logger.warning("Overwriting existing prompt registration: %s", name)
         metadata = get_mcp_metadata(handler) or {}
@@ -501,8 +499,16 @@ class Registry:
             description=desc,
             arguments=arguments if arguments is not None else metadata.get("arguments"),
             icons=icons if icons is not None else metadata.get("icons"),
+            completions=dict(completions if completions is not None else metadata.get("completions") or {}),
         )
         self._trigger_change()
+
+    @property
+    def has_completers(self) -> "bool":
+        """Whether any prompt or resource template has a real completer."""
+        return any(prompt.completions for prompt in self._prompts.values()) or any(
+            template.completions for template in self._templates.values()
+        )
 
     async def publish_notification(
         self,
