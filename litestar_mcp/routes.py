@@ -29,6 +29,7 @@ from litestar_mcp.jsonrpc import (
     error_response,
     parse_request,
 )
+from litestar_mcp.progress import RequestNotificationStream
 from litestar_mcp.registry import PromptRegistration, Registry  # noqa: TC001
 from litestar_mcp.schema_builder import generate_schema_for_handler, iter_mcp_header_fields
 from litestar_mcp.services.handler import (
@@ -42,7 +43,7 @@ from litestar_mcp.task_backends import TaskExecutionBackend  # noqa: TC001
 from litestar_mcp.tasks import MCPTaskStore  # noqa: TC001
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Awaitable, Callable
 
     from litestar_mcp.jsonrpc import JSONRPCRequest
 
@@ -346,6 +347,44 @@ def _finalize_result(
         result.setdefault("cacheScope", config.cache_scope)
 
 
+def _accepts_event_stream(request: "Request[Any, Any, Any]") -> "bool":
+    """Whether the request explicitly accepts an SSE response."""
+    return any(
+        value.strip().partition(";")[0].lower() == "text/event-stream"
+        for value in request.headers.get("accept", "").split(",")
+    )
+
+
+async def _request_event_stream(
+    dispatch: "Callable[[], Awaitable[dict[str, Any]]]",
+    notifications: "RequestNotificationStream",
+) -> "AsyncGenerator[ServerSentEventMessage, None]":
+    """Yield request notifications, then its one terminal JSON-RPC response.
+
+    Closing the response generator is the transport's cancellation signal:
+    the in-flight dispatch is cancelled and the notification publisher is
+    closed so retained task reporters become no-ops.
+    """
+
+    async def drive() -> "dict[str, Any]":
+        try:
+            return await dispatch()
+        finally:
+            notifications.close()
+
+    dispatch_task = asyncio.create_task(drive())
+    try:
+        async for notification in notifications:
+            yield ServerSentEventMessage(data=encode_json(notification).decode("utf-8"))
+        result = await dispatch_task
+        yield ServerSentEventMessage(data=encode_json(result).decode("utf-8"))
+    finally:
+        notifications.close()
+        if not dispatch_task.done():
+            dispatch_task.cancel()
+        await asyncio.gather(dispatch_task, return_exceptions=True)
+
+
 async def _subscription_response(
     rpc_request: "JSONRPCRequest",
     registry: "Registry",
@@ -476,7 +515,31 @@ class MCPController(Controller):
                 message=f"Method not found: {rpc_request.method}",
                 status_code=HTTP_404_NOT_FOUND,
             )
-        result = await router.dispatch(rpc_request, _build_request_context(request, rpc_request))
+        request_context = _build_request_context(request, rpc_request)
+        if (
+            not rpc_request.is_notification
+            and request_context.progress_token is not None
+            and _accepts_event_stream(request)
+        ):
+            notifications = RequestNotificationStream()
+            request_context.notification_publish = notifications.publish
+
+            async def dispatch_streaming_request() -> "dict[str, Any]":
+                result = await router.dispatch(rpc_request, request_context)
+                if result is None:  # pragma: no cover - guarded by is_notification
+                    return error_response(
+                        rpc_request.id,
+                        JSONRPCError(code=INVALID_PARAMS, message="Client notifications are not supported"),
+                    )
+                _finalize_result(result, method=rpc_request.method, app=app, config=config)
+                return result
+
+            streaming_response = ServerSentEvent(_request_event_stream(dispatch_streaming_request, notifications))
+            streaming_response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
+            streaming_response.headers["X-Accel-Buffering"] = "no"
+            return streaming_response
+
+        result = await router.dispatch(rpc_request, request_context)
         if result is None:
             return _error(
                 rpc_request.id,

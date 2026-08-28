@@ -32,6 +32,7 @@ def _request(
     request_id: "int" = 1,
     params: "dict[str, Any] | None" = None,
     tasks_capable: "bool" = False,
+    progress_token: "str | int | None" = None,
 ) -> "dict[str, Any]":
     request_params = dict(params or {})
     capabilities: dict[str, Any] = {}
@@ -42,6 +43,8 @@ def _request(
         "io.modelcontextprotocol/clientCapabilities": capabilities,
         "io.modelcontextprotocol/clientInfo": {"name": "test-client", "version": "1.0"},
     }
+    if progress_token is not None:
+        request_params["_meta"]["progressToken"] = progress_token
     return {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -59,6 +62,7 @@ async def _run_stdio_exchange(
     requests: "list[dict[str, Any]]",
     *,
     stdio_context: "Any | None" = None,
+    include_notifications: "bool" = False,
 ) -> "list[dict[str, Any]]":
     stdin_read_fd, stdin_write_fd = os.pipe()
     stdout_read_fd, stdout_write_fd = os.pipe()
@@ -89,8 +93,16 @@ async def _run_stdio_exchange(
             responses: list[dict[str, Any]] = []
             for request in requests:
                 test_stdin_writer.write(json.dumps(request).encode("utf-8") + b"\n")
-                if "id" in request:
-                    responses.append(json.loads((await read_line_async()).decode("utf-8")))
+                if "id" not in request:
+                    continue
+                while True:
+                    message = json.loads((await read_line_async()).decode("utf-8"))
+                    if include_notifications:
+                        responses.append(message)
+                    if message.get("id") == request["id"]:
+                        if not include_notifications:
+                            responses.append(message)
+                        break
             return responses
         finally:
             test_stdin_writer.close()
@@ -187,6 +199,38 @@ async def test_standalone_stdio_tool_execution() -> "None":
             test_stdout_reader.close()
             app_stdin.close()
             app_stdout.close()
+
+
+@pytest.mark.anyio
+async def test_standalone_stdio_interleaves_progress_before_the_response() -> "None":
+    mcp = MCP(name="stdio-progress-test")
+
+    @mcp.tool(name="crunch")
+    async def crunch() -> "dict[str, bool]":
+        reporter = litestar_mcp.get_mcp_request_context().progress
+        await reporter.report(1, total=2)
+        await reporter.report(2, total=2)
+        return {"done": True}
+
+    messages = await _run_stdio_exchange(
+        mcp,
+        [
+            _request(
+                "tools/call",
+                params={"name": "crunch", "arguments": {}},
+                progress_token="stdio-token",
+            )
+        ],
+        include_notifications=True,
+    )
+
+    assert [message.get("method") for message in messages[:-1]] == [
+        "notifications/progress",
+        "notifications/progress",
+    ]
+    assert [message["params"]["progress"] for message in messages[:-1]] == [1, 2]
+    assert messages[-1]["id"] == 1
+    assert messages[-1]["result"]["resultType"] == "complete"
 
 
 @pytest.mark.anyio

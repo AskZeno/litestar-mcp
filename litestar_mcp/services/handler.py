@@ -68,6 +68,7 @@ if TYPE_CHECKING:
     from litestar.handlers import BaseRouteHandler
 
     from litestar_mcp.config import MCPConfig
+    from litestar_mcp.progress import ProgressPublish
 
 _logger = logging.getLogger(__name__)
 
@@ -96,6 +97,7 @@ class MCPRequestContext:
     input_responses: "dict[str, Any] | None" = None
     request_state: "str | None" = None
     progress_token: "str | int | None" = None
+    notification_publish: "ProgressPublish | None" = None
     progress: "ProgressReporter" = field(default_factory=ProgressReporter)
 
 
@@ -418,11 +420,10 @@ class MCPHandlerService:
         self.task_config = config.task_config
         self.apps_config = config.apps_config
 
-    def _progress_reporter(self, progress_token: "str | int | None") -> "ProgressReporter":
-        registry = self.registry
-        if registry is None or progress_token is None:
-            return ProgressReporter(progress_token, None)
-        return ProgressReporter(progress_token, registry.publish_notification)
+    @staticmethod
+    def _progress_reporter(context: "RequestContext") -> "ProgressReporter":
+        """Bind progress to this request's response channel, never subscriptions."""
+        return ProgressReporter(context.progress_token, context.notification_publish)
 
     def _client_ui_capable(self, context: "RequestContext") -> "bool":
         """SEP-1865 capability: declared mimeTypes must intersect the server's."""
@@ -467,7 +468,7 @@ class MCPHandlerService:
                 max_blob_bytes=self.config.max_blob_bytes,
             )
 
-        context.progress = self._progress_reporter(context.progress_token)
+        context.progress = self._progress_reporter(context)
         try:
             token = _request_context.set(context)
             try:
@@ -649,7 +650,7 @@ class MCPHandlerService:
                 owner_id=context.owner_id,
                 run_tool=run_tool,
                 progress_token=context.progress_token,
-                progress=self._progress_reporter(context.progress_token),
+                progress=self._progress_reporter(context),
             ),
         )
         return {"resultType": "task", **record.to_dict()}
