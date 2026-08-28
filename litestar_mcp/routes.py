@@ -258,6 +258,9 @@ def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSON
     client_info = meta.get("io.modelcontextprotocol/clientInfo")
     client_id = client_info.get("name") if isinstance(client_info, dict) else None
     sub = _request_subject(request)
+    progress_token = meta.get("progressToken")
+    if not isinstance(progress_token, (str, int)) or isinstance(progress_token, bool):
+        progress_token = None
     return MCPRequestContext(
         client_id=client_id or "anonymous",
         owner_id=f"user:{sub}" if sub is not None else None,
@@ -267,6 +270,7 @@ def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSON
         client_info=client_info if isinstance(client_info, dict) else None,
         input_responses=rpc_request.params.get("inputResponses"),
         request_state=rpc_request.params.get("requestState"),
+        progress_token=progress_token,
     )
 
 

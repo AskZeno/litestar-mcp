@@ -34,6 +34,7 @@ upstream change rebases this branch smaller.
 | --- | --- | --- |
 | CI triggers include `zeno`; fork docs | (bootstrap) | not for upstream |
 | Pluggable task execution backend: `MCPTaskStore` keeps records + `record_status`; `TaskExecutionBackend` (`start`/`cancel`/`deliver_input`) owns execution; `AsyncioTaskBackend` default preserves 0.13.0 behavior | (s1) | PR candidate |
+| Progress notifications: `params._meta.progressToken` threads into tool execution; `ProgressReporter` emits `notifications/progress` (kind detail in `_meta`) from tools and task backends | (s2) | PR candidate |
 
 ## Constraints
 
