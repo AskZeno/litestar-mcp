@@ -39,6 +39,7 @@ upstream change rebases this branch smaller.
 | MCP Apps server contract: official `io.modelcontextprotocol/ui` identifier + `mimeTypes`, `_meta.ui` tool/resource linkage, profile MIME type, capability degradation, and startup validation | `8ec7dd9`, `bf5b07c` | PR candidate (waits on upstream apps posture) |
 | Honest completions: registry-owned prompt/resource completers; capability and method exist only when a provider is registered | `f6db631` | PR candidate |
 | Pluggable tool type adapters shared by validation and JSON Schema; msgspec terminal default, guarded Pydantic integration with host auto-detection, UUID format support | `f7fc013` | PR candidate |
+| Generic product-extension seams: opt-key flat-body schema projection, one request-scoped discovery/invocation policy, and complete request metadata on `MCPRequestContext` | `46303fb` | PR candidate |
 | Handled exception responses run through the synthetic ASGI send lifecycle so request cleanup hooks fire | `09f9bba` | PR candidate |
 | MCP 2026-07-28 conformance sweep pins sentinel headers, notification POST posture, 405s, extension errors, and resource-not-found data | `e3aac34` | test-only upstream candidate |
 
