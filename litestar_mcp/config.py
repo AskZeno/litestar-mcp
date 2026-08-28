@@ -29,6 +29,25 @@ class BeforeToolCallHook(Protocol):
         """Observe a tool call before guards and handler execution."""
 
 
+class MCPToolPolicy(Protocol):
+    """Optional request-scoped discovery and invocation policy."""
+
+    async def transform_tools(
+        self,
+        tools: "list[dict[str, Any]]",
+        request: "Request[Any, Any, Any]",
+    ) -> "list[dict[str, Any]]":
+        """Filter or transform tools visible to this request."""
+
+    async def allows_tool(
+        self,
+        name: "str",
+        arguments: "dict[str, Any]",
+        request: "Request[Any, Any, Any]",
+    ) -> "bool":
+        """Authorize one call using the same policy as discovery."""
+
+
 class AfterToolCallHook(Protocol):
     """Callback invoked after an MCP ``tools/call`` dispatch."""
 
@@ -87,6 +106,7 @@ class MCPOptKeys:
     """
 
     tool: "str" = "mcp_tool"
+    flatten_body: "str" = "mcp_flatten_body"
     ui_resource_uri: "str" = "mcp_ui_resource_uri"
     ui_visibility: "str" = "mcp_ui_visibility"
     resource_ui: "str" = "mcp_resource_ui"
@@ -234,6 +254,8 @@ class MCPConfig:
         type_adapters: Optional first-match tool type adapter chain. ``None``
             auto-detects host integrations; msgspec is always appended as
             the terminal adapter.
+        tool_policy: Optional request-scoped policy shared by tools/list and
+            tools/call so discovery and execution cannot drift.
     """
 
     base_path: "str" = "/mcp"
@@ -250,6 +272,7 @@ class MCPConfig:
     tasks: "bool | MCPTaskConfig" = False
     apps: "bool | MCPAppsConfig" = False
     type_adapters: "Sequence[ToolTypeAdapter] | None" = None
+    tool_policy: "MCPToolPolicy | None" = None
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
     cache_ttl_ms: "int" = 0
     cache_scope: "Literal['private', 'public']" = "private"

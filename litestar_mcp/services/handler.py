@@ -48,7 +48,7 @@ from litestar_mcp.registry import (
     resolve_prompt_description,
     should_include_prompt,
 )
-from litestar_mcp.schema_builder import generate_schema_for_handler
+from litestar_mcp.schema_builder import flatten_single_body_schema, generate_schema_for_handler
 from litestar_mcp.task_backends import TaskExecutionBackend, TaskInvocation
 from litestar_mcp.tasks import MCPTaskStore, TaskLookupError
 from litestar_mcp.ui import UI_EXTENSION as APPS_EXTENSION
@@ -97,6 +97,7 @@ class MCPRequestContext:
     protocol_version: "str" = MCP_PROTOCOL_VERSION
     client_capabilities: "dict[str, Any] | None" = None
     client_info: "dict[str, Any] | None" = None
+    metadata: "dict[str, Any] | None" = None
     input_responses: "dict[str, Any] | None" = None
     request_state: "str | None" = None
     progress_token: "str | int | None" = None
@@ -147,6 +148,14 @@ def _serialize_tool_content(value: "Any") -> "str":
 
 def _scope_overrides_for_context(context: "RequestContext") -> "dict[str, Any] | None":
     return context.scope_overrides if context.request is None else None
+
+
+def _effective_policy_arguments(arguments: "Any") -> "dict[str, Any]":
+    """Expose a structured body directly to request-scoped tool policies."""
+    if not isinstance(arguments, dict):
+        return {}
+    data = arguments.get("data")
+    return dict(data) if isinstance(data, dict) else dict(arguments)
 
 
 def _is_resource_text_media_type(mime_type: "str") -> "bool":
@@ -527,15 +536,19 @@ class MCPHandlerService:
 
             fn = get_handler_function(handler)
             metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+            handler_opt = getattr(handler, "opt", None) or {}
+            input_schema = metadata.get(
+                "input_schema",
+                generate_schema_for_handler(handler, self.type_adapters),
+            )
+            if metadata.get("flatten_body") or handler_opt.get(self.config.opt_keys.flatten_body):
+                input_schema = flatten_single_body_schema(input_schema)
             tool_entry: dict[str, Any] = {
                 "name": name,
                 "description": render_description(
                     handler, fn, kind="tool", fallback_name=name, opt_keys=self.config.opt_keys
                 ),
-                "inputSchema": metadata.get(
-                    "input_schema",
-                    generate_schema_for_handler(handler, self.type_adapters),
-                ),
+                "inputSchema": input_schema,
             }
             if "output_schema" in metadata:
                 tool_entry["outputSchema"] = metadata["output_schema"]
@@ -549,6 +562,9 @@ class MCPHandlerService:
             if ui_meta is not None and self._client_ui_capable(context):
                 tool_entry["_meta"] = {"ui": ui_meta}
             tools.append(tool_entry)
+        policy = self.config.tool_policy
+        if policy is not None and context.request is not None:
+            tools = await policy.transform_tools(tools, context.request)
         try:
             page, next_cursor = _paginate_list(tools, params, self.config.list_page_size)
         except ValueError as exc:
@@ -562,6 +578,18 @@ class MCPHandlerService:
         tool_name = params.get("name")
         if not tool_name:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'name'"))
+
+        policy = self.config.tool_policy
+        if (
+            policy is not None
+            and context.request is not None
+            and not await policy.allows_tool(
+                str(tool_name),
+                _effective_policy_arguments(params.get("arguments")),
+                context.request,
+            )
+        ):
+            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=f"Tool not found: {tool_name}"))
 
         handler = self.discovered_tools.get(tool_name)
         if handler is None:

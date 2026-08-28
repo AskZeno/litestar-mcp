@@ -32,6 +32,7 @@ from litestar_mcp.config import (
     MCPConfig,
     MCPOptKeys,
     MCPTaskConfig,
+    MCPToolPolicy,
 )
 from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.exceptions import (
@@ -76,6 +77,7 @@ __all__ = (
     "MCPStdioContext",
     "MCPTaskConfig",
     "MCPTaskStore",
+    "MCPToolPolicy",
     "MCPToolResult",
     "MissingDependencyError",
     "MsgspecToolTypeAdapter",

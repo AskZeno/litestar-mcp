@@ -274,6 +274,48 @@ def generate_schema_for_handler(
     return schema
 
 
+def flatten_single_body_schema(schema: "dict[str, Any]") -> "dict[str, Any]":
+    """Promote a sole structured ``data`` property to top-level tool args.
+
+    References keep resolving from the tool schema root for both Pydantic
+    (root ``$defs``) and msgspec (property-local ``$defs``) envelopes.
+    Non-body and non-object schemas are returned unchanged.
+    """
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or set(properties) != {"data"}:
+        return schema
+    data_schema = properties.get("data")
+    if not isinstance(data_schema, dict):
+        return schema
+
+    body_schema: dict[str, Any] | None = None
+    if data_schema.get("type") == "object":
+        body_schema = data_schema
+    else:
+        reference = data_schema.get("$ref")
+        nested = data_schema.get("$defs")
+        root = schema.get("$defs")
+        lookup_definitions = nested if isinstance(nested, dict) else root
+        if isinstance(reference, str) and reference.startswith("#/$defs/") and isinstance(lookup_definitions, dict):
+            candidate = lookup_definitions.get(reference.rsplit("/", 1)[-1])
+            if isinstance(candidate, dict) and candidate.get("type") == "object":
+                body_schema = candidate
+    if body_schema is None:
+        return schema
+
+    flattened = dict(schema)
+    flattened["properties"] = dict(body_schema.get("properties") or {})
+    flattened["required"] = list(body_schema.get("required") or [])
+    flattened["additionalProperties"] = body_schema.get("additionalProperties", False)
+    merged_definitions: dict[str, Any] = {}
+    for candidate in (schema.get("$defs"), data_schema.get("$defs"), body_schema.get("$defs")):
+        if isinstance(candidate, dict):
+            merged_definitions.update(candidate)
+    if merged_definitions:
+        flattened["$defs"] = merged_definitions
+    return flattened
+
+
 _META_FIELD_MAP: "tuple[tuple[str, str], ...]" = (
     ("description", "description"),
     ("title", "title"),

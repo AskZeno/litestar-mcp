@@ -279,6 +279,7 @@ def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSON
         protocol_version=MCP_PROTOCOL_VERSION,
         client_capabilities=meta["io.modelcontextprotocol/clientCapabilities"],
         client_info=client_info if isinstance(client_info, dict) else None,
+        metadata=dict(meta),
         input_responses=rpc_request.params.get("inputResponses"),
         request_state=rpc_request.params.get("requestState"),
         progress_token=progress_token,

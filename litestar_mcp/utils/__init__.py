@@ -154,6 +154,7 @@ def mcp_tool(
     scopes: "list[str] | None" = None,
     task_support: "str | None" = None,
     task_input_before_start: "bool" = False,
+    flatten_body: "bool" = False,
     ui_resource_uri: "str | None" = None,
     ui_visibility: "list[str] | None" = None,
 ) -> "Callable[[F], F]":
@@ -184,6 +185,8 @@ def mcp_tool(
         task_input_before_start: Execute the first call synchronously so an
             MRTR input-required result can be completed before creating the
             task on the retry.
+        flatten_body: Advertise a sole structured ``data`` body as the tool's
+            top-level arguments while preserving the handler's body dispatch.
         ui_resource_uri: Optional ``ui://`` resource this tool renders
             through (SEP-1865 ``_meta.ui.resourceUri``); the resource must
             be declared on this server.
@@ -237,6 +240,8 @@ def mcp_tool(
             metadata["task_support"] = task_support
         if task_input_before_start:
             metadata["task_input_before_start"] = True
+        if flatten_body:
+            metadata["flatten_body"] = True
         if ui_resource_uri is not None:
             metadata["ui_resource_uri"] = ui_resource_uri
         visibility = normalized_ui_visibility(ui_visibility)

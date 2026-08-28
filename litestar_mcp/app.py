@@ -812,6 +812,7 @@ class MCP:
                 scope_overrides=_build_stdio_scope_overrides(resolved_stdio_context),
                 client_capabilities=capabilities,
                 client_info=client_info if isinstance(client_info, dict) else None,
+                metadata=dict(meta),
                 input_responses=rpc_request.params.get("inputResponses"),
                 request_state=rpc_request.params.get("requestState"),
                 progress_token=progress_token,
