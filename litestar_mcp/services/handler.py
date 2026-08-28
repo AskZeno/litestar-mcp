@@ -5,7 +5,7 @@ import base64
 import contextvars
 import inspect
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 
 import msgspec
@@ -40,6 +40,7 @@ from litestar_mcp.jsonrpc import (
     JSONRPCError,
     JSONRPCErrorException,
 )
+from litestar_mcp.progress import ProgressReporter
 from litestar_mcp.registry import (
     PromptRegistration,
     Registry,
@@ -96,6 +97,8 @@ class MCPRequestContext:
     client_info: "dict[str, Any] | None" = None
     input_responses: "dict[str, Any] | None" = None
     request_state: "str | None" = None
+    progress_token: "str | int | None" = None
+    progress: "ProgressReporter" = field(default_factory=ProgressReporter)
 
 
 RequestContext = MCPRequestContext
@@ -405,6 +408,12 @@ class MCPHandlerService:
         self.task_backend = task_backend
         self.task_config = config.task_config
 
+    def _progress_reporter(self, progress_token: "str | int | None") -> "ProgressReporter":
+        registry = self.registry
+        if registry is None or progress_token is None:
+            return ProgressReporter(progress_token, None)
+        return ProgressReporter(progress_token, registry.publish_notification)
+
     async def _execute_tool_call(
         self,
         tool_name: "str",
@@ -420,6 +429,7 @@ class MCPHandlerService:
                 max_blob_bytes=self.config.max_blob_bytes,
             )
 
+        context.progress = self._progress_reporter(context.progress_token)
         try:
             token = _request_context.set(context)
             try:
@@ -592,6 +602,8 @@ class MCPHandlerService:
                 arguments=tool_args,
                 owner_id=context.owner_id,
                 run_tool=run_tool,
+                progress_token=context.progress_token,
+                progress=self._progress_reporter(context.progress_token),
             ),
         )
         return {"resultType": "task", **record.to_dict()}

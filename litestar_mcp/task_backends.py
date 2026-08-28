@@ -13,10 +13,11 @@ writer, which persists the record and fans out task-status notifications.
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from litestar_mcp.jsonrpc import INTERNAL_ERROR, JSONRPCError, JSONRPCErrorException
+from litestar_mcp.progress import ProgressReporter
 
 if TYPE_CHECKING:
     from litestar_mcp.tasks import MCPTaskStore, TaskRecord
@@ -47,6 +48,10 @@ class TaskInvocation:
     arguments: "dict[str, Any]"
     owner_id: "str | None"
     run_tool: "ToolPass"
+    progress_token: "str | int | None" = None
+    progress: "ProgressReporter" = field(default_factory=ProgressReporter)
+    """Reporter bound to the creating request's progress token; backends
+    emit mid-execution ``notifications/progress`` through it."""
 
 
 class TaskExecutionBackend(ABC):
