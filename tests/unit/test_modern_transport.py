@@ -1,5 +1,6 @@
 """MCP 2026-07-28 stateless Streamable HTTP contract tests."""
 
+import base64
 from typing import Annotated, Any
 
 from litestar import Litestar, get
@@ -9,6 +10,11 @@ from litestar.testing import TestClient
 from litestar_mcp import LitestarMCP, MCPConfig, MCPToolResult
 
 PROTOCOL_VERSION = "2026-07-28"
+
+
+def _encoded_header(value: str) -> str:
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return f"=?base64?{encoded}?="
 
 
 def _app(config: MCPConfig | None = None) -> Litestar:
@@ -100,7 +106,11 @@ def test_unsupported_protocol_version_lists_supported_versions() -> None:
 
     assert response.status_code == 400
     assert body["error"]["code"] == -32022
-    assert body["error"]["data"]["supportedVersions"] == [PROTOCOL_VERSION]
+    assert body["error"]["data"] == {
+        "supported": [PROTOCOL_VERSION],
+        "supportedVersions": [PROTOCOL_VERSION],
+        "requested": "2099-01-01",
+    }
 
 
 def test_method_header_mismatch_is_header_mismatch() -> None:
@@ -153,9 +163,13 @@ def test_removed_core_methods_are_unknown() -> None:
             assert response.json()["error"]["code"] == -32601
 
 
-def test_legacy_session_header_is_ignored() -> None:
+def test_legacy_session_and_last_event_headers_are_ignored() -> None:
     with TestClient(app=_app()) as client:
-        response = _request(client, "tools/list", headers={"Mcp-Session-Id": "legacy"})
+        response = _request(
+            client,
+            "tools/list",
+            headers={"Mcp-Session-Id": "legacy", "Last-Event-ID": "also-legacy"},
+        )
 
     assert response.status_code == 200
     assert "mcp-session-id" not in response.headers
@@ -196,6 +210,116 @@ def test_parameter_header_annotation_is_discovered_and_validated() -> None:
     assert missing.status_code == 400
     assert missing.json()["error"]["code"] == -32020
     assert matching.status_code == 200
+
+
+def test_mcp_name_decodes_a_literal_that_matches_the_base64_sentinel() -> None:
+    literal_name = "=?base64?literal?="
+
+    @get("/literal", mcp_tool=literal_name, sync_to_thread=False)
+    def literal_tool() -> str:
+        return "matched"
+
+    app = Litestar(route_handlers=[literal_tool], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        response = _request(
+            client,
+            "tools/call",
+            params={"name": literal_name, "arguments": {}},
+            headers={"Mcp-Name": _encoded_header(literal_name)},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["result"]["isError"] is False
+
+
+def test_mcp_param_decodes_non_ascii_and_sentinel_shaped_values() -> None:
+    @get("/label", mcp_tool="label", sync_to_thread=False)
+    def label(
+        value: Annotated[str, Parameter(schema_extra={"x-mcp-header": "Label"})],
+    ) -> str:
+        return value
+
+    app = Litestar(route_handlers=[label], plugins=[LitestarMCP()])
+    values = ("東京", "=?base64?literal?=")
+    with TestClient(app=app) as client:
+        responses = [
+            _request(
+                client,
+                "tools/call",
+                params={"name": "label", "arguments": {"value": value}},
+                headers={"Mcp-Param-Label": _encoded_header(value)},
+            )
+            for value in values
+        ]
+
+    assert [response.status_code for response in responses] == [200, 200]
+
+
+def test_client_notification_post_is_rejected_with_a_null_id_error() -> None:
+    params = {
+        "_meta": {
+            "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+            "io.modelcontextprotocol/clientCapabilities": {},
+            "io.modelcontextprotocol/clientInfo": {"name": "tests", "version": "1"},
+        }
+    }
+    with TestClient(app=_app()) as client:
+        response = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/list", "params": params},
+            headers={
+                "Accept": "application/json",
+                "MCP-Protocol-Version": PROTOCOL_VERSION,
+                "Mcp-Method": "tools/list",
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": -32602, "message": "Client notifications are not supported over Streamable HTTP"},
+    }
+
+
+def test_missing_required_capability_has_the_standard_payload() -> None:
+    @get(
+        "/guarded",
+        mcp_tool="guarded",
+        mcp_required_client_capabilities={"extensions": {"example.test/feature": {}}},
+        sync_to_thread=False,
+    )
+    def guarded() -> str:
+        return "nope"
+
+    app = Litestar(route_handlers=[guarded], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        response = _request(client, "tools/call", params={"name": "guarded", "arguments": {}})
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "code": -32021,
+        "message": "Tool 'guarded' requires additional client capabilities",
+        "data": {"requiredCapabilities": {"extensions": {"example.test/feature": {}}}},
+    }
+
+
+def test_resource_not_found_is_invalid_params_with_uri_data() -> None:
+    uri = "missing://resource"
+    with TestClient(app=_app()) as client:
+        response = _request(
+            client,
+            "resources/read",
+            params={"uri": uri},
+            headers={"Mcp-Name": uri},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "code": -32602,
+        "message": "Resource not found",
+        "data": {"uri": uri},
+    }
 
 
 def test_subscriptions_listen_streams_acknowledgement_first() -> None:
