@@ -86,6 +86,32 @@ def test_exception_handler_error_response_becomes_is_error_true() -> "None":
     assert "nope" in resp["result"]["content"][0]["text"]
 
 
+def test_handled_exception_response_runs_inner_before_send_hooks() -> "None":
+    seen: list[str] = []
+
+    async def before_send(message: "dict[str, Any]", scope: "dict[str, Any]") -> "None":
+        if scope.get("litestar_mcp.internal_dispatch"):
+            seen.append(str(message["type"]))
+
+    cleanup = "cleanup"
+
+    @post(
+        "/x",
+        exception_handlers={DomainError: _handler_returns_4xx},
+        mcp_tool="x",
+        sync_to_thread=False,
+    )
+    def tool() -> "dict[str, str]":
+        raise DomainError(cleanup)
+
+    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], before_send=[before_send])  # type: ignore[list-item]
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "x")
+
+    assert resp["result"]["isError"] is True
+    assert seen == ["http.response.start", "http.response.body"]
+
+
 def test_exception_handler_2xx_response_recovers_to_is_error_false() -> "None":
     soft = "soft fail"
 

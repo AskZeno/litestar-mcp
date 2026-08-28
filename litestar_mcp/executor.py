@@ -31,6 +31,7 @@ from urllib.parse import urlencode
 from litestar import Litestar, Request
 from litestar._asgi.routing_trie.traversal import parse_path_params
 from litestar.exceptions import ImproperlyConfiguredException, SerializationException
+from litestar.exceptions.responses import create_exception_response
 from litestar.response import Response
 from litestar.serialization import decode_json, encode_json
 from litestar.types.empty import Empty
@@ -587,11 +588,12 @@ async def _dispatch_via_exception_handlers(
     request: "Request[Any, Any, Any]",
     exc: "Exception",
 ) -> "MCPHandlerResponse | None":
-    """Walk ``handler.resolve_exception_handlers()`` MRO-style for ``exc``.
+    """Render a matched exception handler through the synthetic ASGI response.
 
-    Returns:
-        Captured response when a handler matches and renders a response;
-        ``None`` when no handler matches (caller must re-raise).
+    Returning an ``MCPHandlerResponse`` directly skips Litestar's wrapped
+    ``send`` channel and therefore every ``before_send`` hook. Driving the
+    rendered response through :func:`_capture_asgi_response` preserves
+    transaction/session cleanup on handled failures just as on success.
     """
     exception_handlers = handler.resolve_exception_handlers() or {}
     matched = None
@@ -603,19 +605,26 @@ async def _dispatch_via_exception_handlers(
     if matched is None:
         return None
 
-    raw: Any = matched(request, exc)
-    if inspect.isawaitable(raw):
-        raw = await raw
-
-    if isinstance(raw, Response):
-        status = int(getattr(raw, "status_code", 200))
-        body = raw.content if isinstance(raw.content, bytes) else encode_json(raw.content)
-        media_type = str(getattr(raw, "media_type", "") or "application/json")
-        return MCPHandlerResponse(content=raw.content, status_code=status, body=body, media_type=media_type)
-
-    # Exception handler returned raw data — treat as an error render since
-    # it was triggered by a raised exception.
-    return MCPHandlerResponse(content=raw, status_code=500, body=encode_json(raw), media_type="application/json")
+    try:
+        raw: Any = matched(request, exc)
+        if inspect.isawaitable(raw):
+            raw = await raw
+        response = raw if isinstance(raw, Response) else Response(content=raw, status_code=500)
+        asgi_response = response.to_asgi_response(
+            app=request.app,
+            request=request,
+            type_encoders=handler.resolve_type_encoders(),
+        )
+    except Exception as render_exc:  # noqa: BLE001 - fallback must still drive cleanup
+        # Even a broken custom renderer must send a terminal response through
+        # the inner scope so request-owned cleanup hooks can release state.
+        fallback = create_exception_response(request, render_exc)
+        asgi_response = fallback.to_asgi_response(
+            app=request.app,
+            request=request,
+            type_encoders=handler.resolve_type_encoders(),
+        )
+    return await _capture_asgi_response(asgi_response, request)
 
 
 _PATH_PARAMETERS_CACHE: "weakref.WeakKeyDictionary[Any, dict[str, Any]]" = weakref.WeakKeyDictionary()
