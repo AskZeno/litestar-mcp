@@ -1032,16 +1032,25 @@ class MCPHandlerService:
         return {}
 
 
-def _client_has_extension(context: "RequestContext", extension: "str") -> "bool":
-    extensions = (context.client_capabilities or {}).get("extensions")
+def capabilities_declare_extension(client_capabilities: "dict[str, Any] | None", extension: "str") -> "bool":
+    """Whether a request's declared client capabilities include an extension."""
+    extensions = (client_capabilities or {}).get("extensions")
     return isinstance(extensions, dict) and extension in extensions
+
+
+def missing_extension_error(extension: "str") -> "JSONRPCError":
+    """The standard missing-required-client-capability error for one extension."""
+    return JSONRPCError(
+        code=MISSING_REQUIRED_CLIENT_CAPABILITY,
+        message=f"The {extension} client capability is required",
+        data={"requiredCapabilities": {"extensions": {extension: {}}}},
+    )
+
+
+def _client_has_extension(context: "RequestContext", extension: "str") -> "bool":
+    return capabilities_declare_extension(context.client_capabilities, extension)
 
 
 def _require_tasks_capability(context: "RequestContext") -> None:
     if not _client_has_extension(context, TASKS_EXTENSION):
-        raise JSONRPCErrorException(
-            JSONRPCError(
-                code=MISSING_REQUIRED_CLIENT_CAPABILITY,
-                message=f"The {TASKS_EXTENSION} client capability is required",
-            )
-        )
+        raise JSONRPCErrorException(missing_extension_error(TASKS_EXTENSION))

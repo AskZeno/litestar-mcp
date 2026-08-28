@@ -1,5 +1,6 @@
 """Execution-backend seam tests: records persist in the store, work runs in the backend."""
 
+import json
 import time
 from typing import Any, cast
 
@@ -190,3 +191,92 @@ def test_default_backend_is_the_asyncio_runner_and_preserves_prior_behavior() ->
     plugin = next(p for p in app.plugins.init if isinstance(p, LitestarMCP))
     assert isinstance(plugin.task_backend, AsyncioTaskBackend)
     assert plugin.task_backend.store is plugin.task_store
+
+
+def _listen(client: TestClient[Any], notifications: dict[str, Any], *, tasks_capable: bool) -> Any:
+    capabilities: dict[str, Any] = {}
+    if tasks_capable:
+        capabilities["extensions"] = {TASKS_EXTENSION: {}}
+    return client.post(
+        "/mcp",
+        json={
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "subscriptions/listen",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": capabilities,
+                    "io.modelcontextprotocol/clientInfo": {"name": "backend-tests", "version": "1"},
+                },
+                "notifications": notifications,
+            },
+        },
+        headers={
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": PROTOCOL_VERSION,
+            "Mcp-Method": "subscriptions/listen",
+        },
+    )
+
+
+def test_task_id_subscriptions_require_the_tasks_capability() -> None:
+    backend = RecordingBackend()
+    with TestClient(app=_make_app(backend)) as client:
+        rejected = _listen(client, {"taskIds": ["task-1"], "toolsListChanged": True}, tasks_capable=False)
+
+    assert rejected.status_code == 400
+    error = rejected.json()["error"]
+    assert error["code"] == -32021
+    assert error["data"]["requiredCapabilities"]["extensions"] == {TASKS_EXTENSION: {}}
+
+
+def test_declaring_listeners_keep_their_task_id_filter() -> None:
+    class FiniteSubscriptions:
+        async def open(self, subscription_id: Any, notifications: dict[str, Any]) -> Any:
+            async def stream() -> Any:
+                yield {
+                    "jsonrpc": "2.0",
+                    "method": "notifications/subscriptions/acknowledged",
+                    "params": {"notifications": notifications},
+                }
+
+            return "finite", stream()
+
+        async def disconnect(self, stream_id: str) -> None:
+            return None
+
+    backend = RecordingBackend()
+    app = _make_app(backend)
+    plugin = next(p for p in app.plugins.init if isinstance(p, LitestarMCP))
+    plugin.registry.set_subscription_manager(FiniteSubscriptions())  # type: ignore[arg-type]
+    with (
+        TestClient(app=app) as client,
+        client.stream(
+            "POST",
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "subscriptions/listen",
+                "params": {
+                    "_meta": {
+                        "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
+                        "io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}},
+                        "io.modelcontextprotocol/clientInfo": {"name": "backend-tests", "version": "1"},
+                    },
+                    "notifications": {"taskIds": ["task-1"]},
+                },
+            },
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "MCP-Protocol-Version": PROTOCOL_VERSION,
+                "Mcp-Method": "subscriptions/listen",
+            },
+        ) as response,
+    ):
+        data_line = next(line for line in response.iter_lines() if line.startswith("data: "))
+        payload = json.loads(data_line.partition("data: ")[2])
+
+    assert payload["method"] == "notifications/subscriptions/acknowledged"
+    assert payload["params"]["notifications"] == {"taskIds": ["task-1"]}
