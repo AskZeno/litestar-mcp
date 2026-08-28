@@ -34,7 +34,7 @@ from litestar_mcp.exceptions import (
     MissingDependencyError,
 )
 from litestar_mcp.plugin import LitestarMCP
-from litestar_mcp.progress import ProgressReporter, progress_params
+from litestar_mcp.progress import ProgressReporter, RequestNotificationStream, progress_params
 from litestar_mcp.routes import MCPController
 from litestar_mcp.services.handler import MCPRequestContext, get_mcp_request_context
 from litestar_mcp.task_backends import AsyncioTaskBackend, TaskExecutionBackend, TaskInvocation
@@ -68,6 +68,7 @@ __all__ = (
     "MissingDependencyError",
     "OIDCProviderConfig",
     "ProgressReporter",
+    "RequestNotificationStream",
     "TaskExecutionBackend",
     "TaskInvocation",
     "TaskRecord",

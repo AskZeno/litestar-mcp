@@ -27,6 +27,7 @@ from litestar_mcp.jsonrpc import (
     parse_request,
 )
 from litestar_mcp.plugin import LitestarMCP
+from litestar_mcp.progress import RequestNotificationStream
 from litestar_mcp.routes import MCP_PROTOCOL_VERSION, _build_cached_router, _finalize_result
 from litestar_mcp.services.handler import MCPRequestContext
 
@@ -794,6 +795,9 @@ class MCP:
                 return
             client_info = meta.get("io.modelcontextprotocol/clientInfo")
             client_name = client_info.get("name") if isinstance(client_info, dict) else None
+            progress_token = meta.get("progressToken")
+            if not isinstance(progress_token, (str, int)) or isinstance(progress_token, bool):
+                progress_token = None
             request_context = MCPRequestContext(
                 client_id=client_name if isinstance(client_name, str) else resolved_stdio_context.client_id,
                 owner_id=_resolve_stdio_owner_id(resolved_stdio_context),
@@ -803,6 +807,7 @@ class MCP:
                 client_info=client_info if isinstance(client_info, dict) else None,
                 input_responses=rpc_request.params.get("inputResponses"),
                 request_state=rpc_request.params.get("requestState"),
+                progress_token=progress_token,
             )
 
             if rpc_request.method == "subscriptions/listen":
@@ -820,6 +825,14 @@ class MCP:
                     await write(notification)
                 return
 
+            notification_stream = RequestNotificationStream()
+            request_context.notification_publish = notification_stream.publish
+
+            async def forward_notifications() -> "None":
+                async for notification in notification_stream:
+                    await write(notification)
+
+            forward_task = asyncio.create_task(forward_notifications())
             try:
                 result = await router.dispatch(rpc_request, request_context)
             except Exception as exc:
@@ -828,6 +841,9 @@ class MCP:
                     rpc_request.id,
                     JSONRPCError(code=INTERNAL_ERROR, message=f"Internal error: {exc}"),
                 )
+            finally:
+                notification_stream.close()
+                await asyncio.gather(forward_task, return_exceptions=True)
             if result is not None:
                 _finalize_result(result, method=rpc_request.method, app=self.app, config=plugin.config)
                 await write(result)
