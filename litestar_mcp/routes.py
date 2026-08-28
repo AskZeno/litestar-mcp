@@ -31,7 +31,13 @@ from litestar_mcp.jsonrpc import (
 )
 from litestar_mcp.registry import PromptRegistration, Registry  # noqa: TC001
 from litestar_mcp.schema_builder import generate_schema_for_handler, iter_mcp_header_fields
-from litestar_mcp.services.handler import MCPHandlerService, MCPRequestContext
+from litestar_mcp.services.handler import (
+    TASKS_EXTENSION,
+    MCPHandlerService,
+    MCPRequestContext,
+    capabilities_declare_extension,
+    missing_extension_error,
+)
 from litestar_mcp.task_backends import TaskExecutionBackend  # noqa: TC001
 from litestar_mcp.tasks import MCPTaskStore  # noqa: TC001
 
@@ -349,6 +355,23 @@ async def _subscription_response(
             message="subscriptions/listen notifications must be an object",
             status_code=HTTP_400_BAD_REQUEST,
         )
+    if "taskIds" in notifications:
+        # SEP-2663: task-status subscriptions require the tasks client
+        # capability; non-declaring listeners MUST be rejected.
+        meta = rpc_request.params.get("_meta")
+        capabilities = meta.get("io.modelcontextprotocol/clientCapabilities") if isinstance(meta, dict) else None
+        if not capabilities_declare_extension(
+            capabilities if isinstance(capabilities, dict) else None,
+            TASKS_EXTENSION,
+        ):
+            error = missing_extension_error(TASKS_EXTENSION)
+            return _error(
+                rpc_request.id,
+                code=error.code,
+                message=error.message,
+                data=error.data,
+                status_code=HTTP_400_BAD_REQUEST,
+            )
     try:
         stream_id, stream = await registry.subscription_manager.open(rpc_request.id, notifications)
     except Exception as exc:
