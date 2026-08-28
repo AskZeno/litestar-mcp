@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - zeno
 
 concurrency:
   group: ci-${{ github.ref }}
