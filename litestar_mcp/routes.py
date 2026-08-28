@@ -41,9 +41,10 @@ from litestar_mcp.services.handler import (
 )
 from litestar_mcp.task_backends import TaskExecutionBackend  # noqa: TC001
 from litestar_mcp.tasks import MCPTaskStore  # noqa: TC001
+from litestar_mcp.validation import ToolTypeAdapter  # noqa: TC001 - Litestar resolves DI annotations at runtime
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Awaitable, Callable
+    from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 
     from litestar_mcp.jsonrpc import JSONRPCRequest
 
@@ -130,6 +131,7 @@ def _request_metadata_error(
     request: "Request[Any, Any, Any]",
     rpc_request: "JSONRPCRequest",
     discovered_tools: "dict[str, Any]",
+    type_adapters: "Sequence[ToolTypeAdapter]",
 ) -> "Response[Any] | None":
     params = rpc_request.params
     meta = params.get("_meta") if isinstance(params, dict) else None
@@ -211,7 +213,9 @@ def _request_metadata_error(
     arguments = params.get("arguments")
     if not isinstance(arguments, dict):
         return None
-    for path, custom_name, _property_schema in iter_mcp_header_fields(generate_schema_for_handler(handler)):
+    for path, custom_name, _property_schema in iter_mcp_header_fields(
+        generate_schema_for_handler(handler, tuple(type_adapters))
+    ):
         value: Any = arguments
         present = True
         for part in path:
@@ -290,6 +294,7 @@ def _build_cached_router(
     registry: "Registry",
     task_store: "MCPTaskStore | None",
     task_backend: "TaskExecutionBackend | None" = None,
+    type_adapters: "Sequence[ToolTypeAdapter] | None" = None,
 ) -> "JSONRPCRouter":
     router = JSONRPCRouter()
 
@@ -303,6 +308,7 @@ def _build_cached_router(
             registry=registry,
             task_store=task_store,
             task_backend=task_backend,
+            type_adapters=type_adapters,
         )
 
     router.register("server/discover", lambda params, ctx: service().server_discover(params, ctx))
@@ -469,6 +475,7 @@ class MCPController(Controller):
         discovered_resources: "NamedDependency[dict[str, Any]]",
         discovered_prompts: "NamedDependency[dict[str, PromptRegistration]]",
         registry: "NamedDependency[Registry]",
+        type_adapters: "NamedDependency[tuple[ToolTypeAdapter, ...]]",
         task_store: "NamedDependency[MCPTaskStore | None]" = None,
         task_backend: "NamedDependency[TaskExecutionBackend | None]" = None,
     ) -> "Response[Any]":
@@ -490,7 +497,7 @@ class MCPController(Controller):
                 data=exc.error.data,
                 status_code=HTTP_400_BAD_REQUEST,
             )
-        metadata_error = _request_metadata_error(request, rpc_request, discovered_tools)
+        metadata_error = _request_metadata_error(request, rpc_request, discovered_tools, type_adapters)
         if metadata_error is not None:
             return metadata_error
         if rpc_request.method == "subscriptions/listen":
@@ -507,6 +514,7 @@ class MCPController(Controller):
                 registry,
                 task_store,
                 task_backend,
+                type_adapters,
             )
         router: JSONRPCRouter = app.state.mcp_router
         if rpc_request.method not in router.methods:

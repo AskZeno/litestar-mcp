@@ -755,6 +755,7 @@ class MCP:
             registry=plugin.registry,
             task_store=plugin.task_store,
             task_backend=plugin.task_backend,
+            type_adapters=plugin.type_adapters,
         )
 
         resolved_stdio_context = stdio_context or MCPStdioContext()

@@ -1,5 +1,6 @@
 """Litestar MCP Plugin implementation."""
 
+import importlib.util
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,7 @@ from litestar_mcp.task_backends import AsyncioTaskBackend, TaskExecutionBackend
 from litestar_mcp.tasks import MCPTaskStore, TaskRecord
 from litestar_mcp.ui import UI_URI_SCHEME
 from litestar_mcp.utils import get_handler_function, get_mcp_metadata
+from litestar_mcp.validation import ToolTypeAdapter, resolve_type_adapters
 
 _logger = logging.getLogger(__name__)
 
@@ -49,6 +51,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         """
         self._config = config or MCPConfig()
         self._registry = Registry()
+        self._type_adapters = resolve_type_adapters(self._config.type_adapters)
         self._dynamic_handlers: list[BaseRouteHandler] = []
         if prompts:
             for fn in prompts:
@@ -93,6 +96,11 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         return self._registry
 
     @property
+    def type_adapters(self) -> "tuple[ToolTypeAdapter, ...]":
+        """The resolved first-match tool type adapter chain."""
+        return self._type_adapters
+
+    @property
     def task_store(self) -> "MCPTaskStore | None":
         """Get the task store."""
         return self._task_store
@@ -131,6 +139,10 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
 
     def on_app_init(self, app_config: "AppConfig") -> "AppConfig":
         """Initialize the MCP integration when the Litestar app starts."""
+        self._type_adapters = resolve_type_adapters(
+            self._config.type_adapters,
+            include_pydantic=self._host_uses_pydantic(app_config),
+        )
         app_config.route_handlers.extend(self._dynamic_handlers)
         self._discover_mcp_routes(app_config.route_handlers)
         self._registry.set_subscription_manager(self._subscription_manager)
@@ -151,6 +163,9 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         def provide_registry() -> "Registry":
             return self._registry
 
+        def provide_type_adapters() -> "tuple[ToolTypeAdapter, ...]":
+            return self._type_adapters
+
         def provide_task_store() -> "MCPTaskStore | None":
             return self._task_store
 
@@ -165,6 +180,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
             "dependencies": {
                 "config": Provide(provide_mcp_config, sync_to_thread=False),
                 "registry": Provide(provide_registry, sync_to_thread=False),
+                "type_adapters": Provide(provide_type_adapters, sync_to_thread=False),
                 "task_store": Provide(provide_task_store, sync_to_thread=False),
                 "task_backend": Provide(provide_task_backend, sync_to_thread=False),
                 "discovered_tools": Provide(lambda: self._registry.tools, sync_to_thread=False),
@@ -221,7 +237,7 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._subscription_manager.start()
         self._discover_mcp_routes(all_handlers)
         for handler in self._registry.tools.values():
-            validate_mcp_header_schema(generate_schema_for_handler(handler))
+            validate_mcp_header_schema(generate_schema_for_handler(handler, self._type_adapters))
         if self._config.apps_config is not None:
             self._validate_ui_contract()
 
@@ -234,6 +250,17 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         self._registry.register_change_callback(invalidate_router)
         app.state.mcp_router_invalidation_callback = invalidate_router
         _logger.debug("Registered invalidate_router callback on registry: %s", id(self._registry))
+
+    @staticmethod
+    def _host_uses_pydantic(app_config: "AppConfig") -> "bool":
+        """Detect Litestar's Pydantic plugin, with importability fallback."""
+        try:
+            from litestar.plugins.pydantic import PydanticPlugin
+        except ImportError:
+            return False
+        return any(isinstance(plugin, PydanticPlugin) for plugin in app_config.plugins) or (
+            importlib.util.find_spec("pydantic") is not None
+        )
 
     async def on_shutdown(self, app: "Litestar") -> "None":
         """Clean up resources on application shutdown."""

@@ -6,6 +6,7 @@ import re
 from dataclasses import MISSING, fields
 from types import UnionType
 from typing import TYPE_CHECKING, Any, Union, get_args, get_origin
+from uuid import UUID
 
 import msgspec
 
@@ -20,6 +21,12 @@ from litestar_mcp.utils import get_handler_function
 from litestar_mcp.utils.handler_signature import (
     _unwrap_annotated,
     get_advertised_handler_parameters,
+)
+from litestar_mcp.validation import (
+    MsgspecToolTypeAdapter,
+    ToolTypeAdapter,
+    resolve_type_adapters,
+    type_adapter_for,
 )
 
 if TYPE_CHECKING:
@@ -39,17 +46,22 @@ def basic_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
         return {"type": "number"}
     if annotation is bool:
         return {"type": "boolean"}
+    if annotation is UUID:
+        return {"type": "string", "format": "uuid"}
     return None
 
 
-def collection_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
+def collection_type_to_json_schema(
+    annotation: "Any",
+    type_adapters: "tuple[ToolTypeAdapter, ...] | None" = None,
+) -> "dict[str, Any] | None":
     """Convert collection types (list, dict, set) to JSON Schema format."""
     origin = get_origin(annotation)
 
     if annotation is list or origin is list:
         args = get_args(annotation)
         if args:
-            return {"type": "array", "items": type_to_json_schema(args[0])}
+            return {"type": "array", "items": type_to_json_schema(args[0], type_adapters)}
         return {"type": "array"}
 
     if annotation is dict or origin is dict:
@@ -58,7 +70,11 @@ def collection_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None"
     if annotation is set or origin is set:
         args = get_args(annotation)
         if args:
-            return {"type": "array", "items": type_to_json_schema(args[0]), "uniqueItems": True}
+            return {
+                "type": "array",
+                "items": type_to_json_schema(args[0], type_adapters),
+                "uniqueItems": True,
+            }
         return {"type": "array", "uniqueItems": True}
 
     return None
@@ -80,13 +96,16 @@ def msgspec_to_json_schema(struct_type: "Any") -> "dict[str, Any]":
     return msgspec.json.schema(struct_type)
 
 
-def dataclass_to_json_schema(dataclass_type: "Any") -> "dict[str, Any]":
+def dataclass_to_json_schema(
+    dataclass_type: "Any",
+    type_adapters: "tuple[ToolTypeAdapter, ...] | None" = None,
+) -> "dict[str, Any]":
     """Convert dataclass to JSON Schema format."""
     properties = {}
     required = []
 
     for field in fields(dataclass_type):
-        field_schema = type_to_json_schema(field.type)
+        field_schema = type_to_json_schema(field.type, type_adapters)
         properties[field.name] = field_schema
         if field.default is MISSING and field.default_factory is MISSING:
             required.append(field.name)
@@ -97,13 +116,16 @@ def dataclass_to_json_schema(dataclass_type: "Any") -> "dict[str, Any]":
     return schema
 
 
-def attrs_to_json_schema(attrs_type: "Any") -> "dict[str, Any]":
+def attrs_to_json_schema(
+    attrs_type: "Any",
+    type_adapters: "tuple[ToolTypeAdapter, ...] | None" = None,
+) -> "dict[str, Any]":
     """Convert attrs class to JSON Schema format."""
     properties = {}
     required = []
 
     for field in attrs_fields(attrs_type):
-        field_schema = type_to_json_schema(field.type)
+        field_schema = type_to_json_schema(field.type, type_adapters)
         properties[field.name] = field_schema
         if field.default is inspect.Parameter.empty:
             required.append(field.name)
@@ -114,11 +136,11 @@ def attrs_to_json_schema(attrs_type: "Any") -> "dict[str, Any]":
     return schema
 
 
-def model_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
-    """Convert a model class (Pydantic, msgspec, attrs, dataclass) to JSON Schema format.
-
-    This is the main entry point for structured type conversion.
-    """
+def model_to_json_schema(
+    annotation: "Any",
+    type_adapters: "tuple[ToolTypeAdapter, ...] | None" = None,
+) -> "dict[str, Any] | None":
+    """Convert a model class (Pydantic, msgspec, attrs, dataclass) to JSON Schema format."""
     if is_pydantic_model(annotation):
         return pydantic_to_json_schema(annotation)
 
@@ -126,15 +148,18 @@ def model_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
         return msgspec_to_json_schema(annotation)
 
     if is_attrs_instance(annotation):
-        return attrs_to_json_schema(annotation)
+        return attrs_to_json_schema(annotation, type_adapters)
 
     if is_dataclass(annotation):
-        return dataclass_to_json_schema(annotation)
+        return dataclass_to_json_schema(annotation, type_adapters)
 
     return None
 
 
-def union_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
+def union_type_to_json_schema(
+    annotation: "Any",
+    type_adapters: "tuple[ToolTypeAdapter, ...] | None" = None,
+) -> "dict[str, Any] | None":
     """Convert Union types (including Optional) to JSON Schema format."""
     origin = get_origin(annotation)
 
@@ -145,34 +170,32 @@ def union_type_to_json_schema(annotation: "Any") -> "dict[str, Any] | None":
     if origin in {Union, UnionType}:
         args = get_args(annotation)
         if len(args) == 1:
-            return type_to_json_schema(args[0])
+            return type_to_json_schema(args[0], type_adapters)
         # Build anyOf for all member types (including NoneType → {"type": "null"})
         any_of = []
         for arg in args:
             if arg is type(None):
                 any_of.append({"type": "null"})
             else:
-                any_of.append(type_to_json_schema(arg))
+                any_of.append(type_to_json_schema(arg, type_adapters))
         return {"anyOf": any_of}
 
     return None
 
 
-def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":  # noqa: PLR0911
-    """Convert a Python type annotation to JSON Schema format.
-
-    Args:
-        annotation: Python type annotation to convert.
-
-    Returns:
-        JSON Schema dictionary for the type.
-    """
+def type_to_json_schema(  # noqa: PLR0911
+    annotation: "Any",
+    type_adapters: "tuple[ToolTypeAdapter, ...] | None" = None,
+) -> "dict[str, Any]":
+    """Convert a Python type annotation to JSON Schema format."""
     if annotation is None or annotation == inspect.Parameter.empty:
         return {"type": "object", "description": "No type annotation provided"}
 
+    adapters = resolve_type_adapters(type_adapters)
     inner, metas = _unwrap_annotated(annotation)
     if inner is not annotation:
-        schema = type_to_json_schema(inner)
+        adapter_schema = type_adapter_for(annotation, adapters).json_schema(annotation)
+        schema = adapter_schema if adapter_schema is not None else type_to_json_schema(inner, adapters)
         for meta in metas:
             _merge_parameter_meta(schema, meta)
         return schema
@@ -182,40 +205,45 @@ def type_to_json_schema(annotation: "Any") -> "dict[str, Any]":  # noqa: PLR0911
         if isinstance(annotation, dict):
             return annotation
 
+    adapter_schema = type_adapter_for(annotation, adapters).json_schema(annotation)
+    if adapter_schema is not None:
+        return adapter_schema
     if result := basic_type_to_json_schema(annotation):
         return result
-    if result := collection_type_to_json_schema(annotation):
+    if result := collection_type_to_json_schema(annotation, adapters):
         return result
-    if result := model_to_json_schema(annotation):
+    if result := model_to_json_schema(annotation, adapters):
         return result
 
-    return union_type_to_json_schema(annotation) or {
+    return union_type_to_json_schema(annotation, adapters) or {
         "type": "object",
         "description": "Parameter of type " + str(annotation),
     }
 
 
-def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]":
-    """Generate a JSON Schema for an MCP tool handler.
-
-    Args:
-        handler: The route handler to generate schema for.
-
-    Returns:
-        JSON Schema dictionary describing the tool's input parameters.
-    """
+def generate_schema_for_handler(
+    handler: "BaseRouteHandler",
+    type_adapters: "tuple[ToolTypeAdapter, ...] | None" = None,
+) -> "dict[str, Any]":
+    """Generate a JSON Schema for an MCP tool handler and adapter chain."""
     try:
         fn = get_handler_function(handler)
     except AttributeError:
         fn = handler
 
     advertised_params = get_advertised_handler_parameters(handler)
-
+    adapters = resolve_type_adapters(type_adapters)
     properties: dict[str, Any] = {}
+    definitions: dict[str, Any] = {}
     required: list[str] = []
 
     for param in advertised_params:
-        prop_schema = type_to_json_schema(param.annotation)
+        prop_schema = type_to_json_schema(param.annotation, adapters)
+        owner = type_adapter_for(param.annotation, adapters)
+        if not isinstance(owner, MsgspecToolTypeAdapter):
+            nested_definitions = prop_schema.pop("$defs", None)
+            if isinstance(nested_definitions, dict):
+                definitions.update(nested_definitions)
         _, metas = _unwrap_annotated(param.annotation)
         if param.default is not inspect.Parameter.empty and any(getattr(m, "const", False) for m in metas):
             prop_schema["const"] = param.default
@@ -233,6 +261,8 @@ def generate_schema_for_handler(handler: "BaseRouteHandler") -> "dict[str, Any]"
 
     if required:
         schema["required"] = required
+    if definitions:
+        schema["$defs"] = definitions
 
     fn_name = getattr(fn, "__name__", "unknown_function")
     fn_doc = getattr(fn, "__doc__", None)

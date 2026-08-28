@@ -48,6 +48,7 @@ Source = "https://github.com/cofin/litestar-mcp"
 
 [project.optional-dependencies]
 bridge = ["httpx-sse>=0.4.0"]
+pydantic = ["pydantic>=2"]
 
 [project.entry-points."pygments.styles"]
 litestar-mcp-dark = "tools.sphinx_ext.pygments_styles:LitestarMcpDarkStyle"

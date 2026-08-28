@@ -8,7 +8,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 
-import msgspec
 from litestar.serialization import encode_json
 
 from litestar_mcp._cursor import decode_cursor, encode_cursor
@@ -62,8 +61,11 @@ from litestar_mcp.utils import (
     should_include_handler,
 )
 from litestar_mcp.utils.handler_signature import _unwrap_annotated, get_advertised_handler_parameters
+from litestar_mcp.validation import ToolTypeAdapter, resolve_type_adapters, type_adapter_for
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from litestar import Litestar, Request
     from litestar.handlers import BaseRouteHandler
 
@@ -286,17 +288,6 @@ def _to_pointer(name: "str", msgspec_path: "str") -> "str":
     return "/" + "/".join(parts)
 
 
-def _split_msgspec_error(exc: "Exception") -> "tuple[str, str]":
-    """Split a ``msgspec.ValidationError`` string into (reason, path)."""
-    text = str(exc)
-    marker = " - at `"
-    if marker in text and text.endswith("`"):
-        reason, _, tail = text.rpartition(marker)
-        path = tail[:-1]
-        return reason, path
-    return text, ""
-
-
 def _resolve_annotated_types(handler: "BaseRouteHandler") -> "dict[str, Any]":
     """Return ``{param_name: annotated_type}`` from the original handler function."""
     fn = get_handler_function(handler)
@@ -306,7 +297,11 @@ def _resolve_annotated_types(handler: "BaseRouteHandler") -> "dict[str, Any]":
         return {}
 
 
-def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, Any]") -> "list[dict[str, str]]":
+def _validate_tool_arguments(
+    handler: "BaseRouteHandler",
+    tool_args: "dict[str, Any]",
+    type_adapters: "Sequence[ToolTypeAdapter] | None" = None,
+) -> "list[dict[str, str]]":
     """Validate ``tool_args`` against the handler's Litestar signature.
 
     Path parameters are excluded since Litestar extracts them directly from
@@ -317,6 +312,7 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, 
     sorted by path for deterministic output.
     """
 
+    adapters = resolve_type_adapters(type_adapters)
     advertised_params = get_advertised_handler_parameters(handler)
     python_to_wire = {p.python_name: p.wire_name for p in advertised_params}
     aliases = {p.wire_name: p.python_name for p in advertised_params if p.wire_name != p.python_name}
@@ -349,13 +345,10 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, 
             else {k: v for k, v in tool_args.items() if k not in recognized_scalar_names}
         )
         if has_explicit_data or data_payload:
-            try:
-                msgspec.convert(data_payload, data_type, strict=False)
-            except msgspec.ValidationError as exc:
-                reason, path = _split_msgspec_error(exc)
-                errors.append({"path": _to_pointer("data", path), "message": reason})
-            except TypeError:
-                pass
+            errors.extend(
+                {"path": _to_pointer("data", issue.path), "message": issue.message}
+                for issue in type_adapter_for(data_type, adapters).validate(data_payload, data_type)
+            )
 
     for name, parameter in advertised_by_name.items():
         if name in tool_args:
@@ -384,14 +377,11 @@ def _validate_tool_arguments(handler: "BaseRouteHandler", tool_args: "dict[str, 
             inner, _ = _unwrap_annotated(raw)
             default_annotation = inner
         convert_type = annotated_types.get(name, default_annotation)
-        try:
-            msgspec.convert(value, convert_type, strict=False)
-        except msgspec.ValidationError as exc:
-            reason, path = _split_msgspec_error(exc)
-            wire_name = advertised_by_name[name].wire_name
-            errors.append({"path": _to_pointer(wire_name, path), "message": reason})
-        except TypeError:
-            continue
+        wire_name = advertised_by_name[name].wire_name
+        errors.extend(
+            {"path": _to_pointer(wire_name, issue.path), "message": issue.message}
+            for issue in type_adapter_for(convert_type, adapters).validate(value, convert_type)
+        )
 
     return sorted(errors, key=lambda entry: (entry["path"], entry["message"]))
 
@@ -409,6 +399,7 @@ class MCPHandlerService:
         registry: "Registry | None",
         task_store: "MCPTaskStore | None" = None,
         task_backend: "TaskExecutionBackend | None" = None,
+        type_adapters: "Sequence[ToolTypeAdapter] | None" = None,
     ) -> "None":
         self.config = config
         self.discovered_tools = discovered_tools
@@ -418,6 +409,7 @@ class MCPHandlerService:
         self.registry = registry
         self.task_store = task_store
         self.task_backend = task_backend
+        self.type_adapters = resolve_type_adapters(type_adapters)
         self.task_config = config.task_config
         self.apps_config = config.apps_config
 
@@ -461,7 +453,7 @@ class MCPHandlerService:
         tool_args: "dict[str, Any]",
         context: "RequestContext",
     ) -> "dict[str, Any]":
-        validation_errors = _validate_tool_arguments(handler, tool_args)
+        validation_errors = _validate_tool_arguments(handler, tool_args, self.type_adapters)
         if validation_errors:
             return _build_tool_result(
                 {"error": "Invalid tool arguments", "errors": validation_errors},
@@ -540,7 +532,10 @@ class MCPHandlerService:
                 "description": render_description(
                     handler, fn, kind="tool", fallback_name=name, opt_keys=self.config.opt_keys
                 ),
-                "inputSchema": metadata.get("input_schema", generate_schema_for_handler(handler)),
+                "inputSchema": metadata.get(
+                    "input_schema",
+                    generate_schema_for_handler(handler, self.type_adapters),
+                ),
             }
             if "output_schema" in metadata:
                 tool_entry["outputSchema"] = metadata["output_schema"]

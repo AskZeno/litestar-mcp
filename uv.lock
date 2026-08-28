@@ -1960,6 +1960,9 @@ dependencies = [
 bridge = [
     { name = "httpx-sse" },
 ]
+pydantic = [
+    { name = "pydantic" },
+]
 
 [package.dev-dependencies]
 adk = [
@@ -2088,9 +2091,10 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.24.1" },
     { name = "httpx-sse", marker = "extra == 'bridge'", specifier = ">=0.4.0" },
     { name = "litestar", extras = ["jwt"], specifier = ">=2.23.0" },
+    { name = "pydantic", marker = "extra == 'pydantic'", specifier = ">=2" },
     { name = "typing-extensions", specifier = ">=4.0.0" },
 ]
-provides-extras = ["bridge"]
+provides-extras = ["bridge", "pydantic"]
 
 [package.metadata.requires-dev]
 adk = [{ name = "google-adk", extras = ["mcp"], specifier = ">=2" }]

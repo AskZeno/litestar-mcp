@@ -48,6 +48,7 @@ from litestar_mcp.task_backends import AsyncioTaskBackend, TaskExecutionBackend,
 from litestar_mcp.tasks import MCPTaskStore, TaskRecord
 from litestar_mcp.ui import UI_EXTENSION, UI_MIME_TYPE
 from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
+from litestar_mcp.validation import MsgspecToolTypeAdapter, ToolTypeAdapter, ValidationIssue
 
 __all__ = (
     "MCP",
@@ -77,6 +78,7 @@ __all__ = (
     "MCPTaskStore",
     "MCPToolResult",
     "MissingDependencyError",
+    "MsgspecToolTypeAdapter",
     "OIDCProviderConfig",
     "ProgressReporter",
     "RequestNotificationStream",
@@ -84,6 +86,8 @@ __all__ = (
     "TaskInvocation",
     "TaskRecord",
     "TokenValidator",
+    "ToolTypeAdapter",
+    "ValidationIssue",
     "__version__",
     "create_oidc_validator",
     "get_mcp_request_context",

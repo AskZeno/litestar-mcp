@@ -1,5 +1,6 @@
 """Configuration for Litestar MCP Plugin."""
 
+from collections.abc import Sequence  # noqa: TC003 - Litestar evaluates config annotations at runtime
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -7,6 +8,7 @@ from litestar.stores.base import Store  # noqa: TC002
 
 from litestar_mcp.auth import MCPAuthConfig  # noqa: TC001
 from litestar_mcp.task_backends import TaskExecutionBackend  # noqa: TC001
+from litestar_mcp.validation import ToolTypeAdapter  # noqa: TC001 - runtime config annotation
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
@@ -229,6 +231,9 @@ class MCPConfig:
             elapsed dispatch duration in seconds.
         max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
             Set to ``None`` to disable the library cap.
+        type_adapters: Optional first-match tool type adapter chain. ``None``
+            auto-detects host integrations; msgspec is always appended as
+            the terminal adapter.
     """
 
     base_path: "str" = "/mcp"
@@ -244,6 +249,7 @@ class MCPConfig:
     auth: "MCPAuthConfig | None" = None
     tasks: "bool | MCPTaskConfig" = False
     apps: "bool | MCPAppsConfig" = False
+    type_adapters: "Sequence[ToolTypeAdapter] | None" = None
     opt_keys: "MCPOptKeys" = field(default_factory=MCPOptKeys)
     cache_ttl_ms: "int" = 0
     cache_scope: "Literal['private', 'public']" = "private"
