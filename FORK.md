@@ -37,6 +37,14 @@ upstream change rebases this branch smaller.
 | Progress notifications: `params._meta.progressToken` threads into tool execution; `ProgressReporter` emits `notifications/progress` (kind detail in `_meta`) from tools and task backends | (s2) | PR candidate |
 | MCP Apps extension: `MCPConfig.apps` handshake (`io.modelcontextprotocol/apps`); `ui://` resources visible only to capable clients of an apps-enabled server, inert otherwise | (s3) | PR candidate (waits on upstream apps posture) |
 
+## Conformance
+
+Known deltas against MCP 2026-07-28, the tasks extension (SEP-2663), and
+the apps extension (SEP-1865) are tracked in the monorepo's
+`docs/plans/mcp-conformance-gap-ledger.md` (G1-G8). Fork-surface rows:
+G1 progress delivery lane, G2 taskIds capability gate (spec-MUST),
+G3 ping, G4 completions stub, G6 apps tool association.
+
 ## Upstream offering (ADR-0087 s8)
 
 Two PR-ready branches are rebased onto ``upstream/main`` and kept green
