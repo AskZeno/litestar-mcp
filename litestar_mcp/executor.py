@@ -353,11 +353,40 @@ async def _run_handler_pipeline(
             await _run_after_exception_hooks(app, dispatch_request, exc)
             handled = await _dispatch_via_exception_handlers(handler, dispatch_request, exc)
             if handled is None:
+                await _drive_terminal_cleanup(handler, dispatch_request, exc)
                 raise
             response = handled
     finally:
         await _run_after_response(handler, dispatch_request)
     return response
+
+
+async def _drive_terminal_cleanup(
+    handler: "BaseRouteHandler",
+    request: "Request[Any, Any, Any]",
+    exc: "Exception",
+) -> "None":
+    """Send a terminal response through the wrapped ``send`` before re-raising.
+
+    An exception without a matching layered exception handler propagates to
+    the JSON-RPC layer, so no ASGI response ever crosses the dispatch scope's
+    wrapped ``send``. ``before_send`` hooks keyed on the terminal ASGI events
+    (advanced-alchemy session close, transaction cleanup) would then never
+    fire and request-scoped resources would leak. Render Litestar's default
+    exception response and drive it through the sink purely for its cleanup
+    side effects; the caller still re-raises ``exc`` so error mapping is
+    unchanged.
+    """
+    try:
+        cleanup_response = create_exception_response(request, exc)
+        asgi_response = cleanup_response.to_asgi_response(
+            app=request.app,
+            request=request,
+            type_encoders=handler.resolve_type_encoders(),
+        )
+        await _capture_asgi_response(asgi_response, request)
+    except Exception:
+        _logger.exception("terminal cleanup response failed during MCP dispatch")
 
 
 async def _enforce_guards(handler: "BaseRouteHandler", request: "Request[Any, Any, Any]") -> "None":

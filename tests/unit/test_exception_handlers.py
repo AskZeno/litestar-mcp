@@ -112,6 +112,33 @@ def test_handled_exception_response_runs_inner_before_send_hooks() -> "None":
     assert seen == ["http.response.start", "http.response.body"]
 
 
+def test_unhandled_exception_still_runs_inner_before_send_hooks() -> "None":
+    """No matching layered exception handler: the error propagates to the
+    JSON-RPC layer, but the dispatch scope must still see a terminal ASGI
+    response so ``before_send``-keyed cleanup (advanced-alchemy session
+    close, transaction teardown) releases request-scoped resources.
+    """
+    seen: list[str] = []
+
+    async def before_send(message: "dict[str, Any]", scope: "dict[str, Any]") -> "None":
+        if scope.get("litestar_mcp.internal_dispatch"):
+            seen.append(str(message["type"]))
+
+    leak_check = "leak check"
+
+    @post("/x", mcp_tool="x", sync_to_thread=False)
+    def tool() -> "dict[str, str]":
+        raise DomainError(leak_check)
+
+    app = Litestar(route_handlers=[tool], plugins=[LitestarMCP()], before_send=[before_send])  # type: ignore[list-item]
+    with TestClient(app=app) as client:
+        resp = _call_tool(client, "x")
+
+    assert resp["result"]["isError"] is True
+    assert "leak check" in resp["result"]["content"][0]["text"]
+    assert seen == ["http.response.start", "http.response.body"]
+
+
 def test_exception_handler_2xx_response_recovers_to_is_error_false() -> "None":
     soft = "soft fail"
 
