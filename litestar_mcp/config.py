@@ -164,6 +164,9 @@ class MCPTaskConfig:
         if self.default_ttl_ms is not None and self.default_ttl_ms < 0:
             msg = "default_ttl_ms must be non-negative or None"
             raise ValueError(msg)
+        if self.max_ttl_ms < 0:
+            msg = "max_ttl_ms must be non-negative"
+            raise ValueError(msg)
         if self.default_ttl_ms is not None and self.max_ttl_ms < self.default_ttl_ms:
             msg = "max_ttl_ms must be greater than or equal to default_ttl_ms"
             raise ValueError(msg)

@@ -3,6 +3,7 @@
 import time
 from typing import Any, cast
 
+import pytest
 from litestar import Litestar, get
 from litestar.stores.memory import MemoryStore
 from litestar.testing import TestClient
@@ -162,6 +163,13 @@ def test_task_config_can_retain_records_without_a_ttl() -> None:
 
     assert created["ttlMs"] is None
     assert completed["ttlMs"] is None
+
+
+def test_task_config_rejects_negative_ttl_bounds() -> None:
+    with pytest.raises(ValueError, match="default_ttl_ms must be non-negative or None"):
+        MCPTaskConfig(default_ttl_ms=-1)
+    with pytest.raises(ValueError, match="max_ttl_ms must be non-negative"):
+        MCPTaskConfig(default_ttl_ms=None, max_ttl_ms=-1)
 
 
 def test_required_tool_rejects_client_without_extension() -> None:
