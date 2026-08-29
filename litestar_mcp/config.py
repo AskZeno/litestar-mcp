@@ -151,7 +151,8 @@ class MCPTaskConfig:
     """Configuration for the opt-in MCP Tasks extension."""
 
     store: "Store | None" = None
-    default_ttl_ms: "int" = 300_000
+    default_ttl_ms: "int | None" = 300_000
+    """Default lifetime from creation; ``None`` retains tasks indefinitely."""
     max_ttl_ms: "int" = 3_600_000
     poll_interval_ms: "int" = 1_000
     execution_backend: "TaskExecutionBackend | None" = None
@@ -160,10 +161,10 @@ class MCPTaskConfig:
     execution engine."""
 
     def __post_init__(self) -> "None":
-        if self.default_ttl_ms < 0:
-            msg = "default_ttl_ms must be non-negative"
+        if self.default_ttl_ms is not None and self.default_ttl_ms < 0:
+            msg = "default_ttl_ms must be non-negative or None"
             raise ValueError(msg)
-        if self.max_ttl_ms < self.default_ttl_ms:
+        if self.default_ttl_ms is not None and self.max_ttl_ms < self.default_ttl_ms:
             msg = "max_ttl_ms must be greater than or equal to default_ttl_ms"
             raise ValueError(msg)
         if self.poll_interval_ms <= 0:

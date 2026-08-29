@@ -89,7 +89,7 @@ class MCPTaskStore:
     def __init__(
         self,
         store: Store | None = None,
-        default_ttl_ms: int = 300_000,
+        default_ttl_ms: int | None = 300_000,
         max_ttl_ms: int = 3_600_000,
         poll_interval_ms: int = 1_000,
         status_callback: Callable[[TaskRecord], Awaitable[None]] | None = None,

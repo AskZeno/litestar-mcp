@@ -148,6 +148,22 @@ def test_optional_tool_uses_task_for_capable_client_and_sync_fallback_otherwise(
     assert completed["result"]["isError"] is False
 
 
+def test_task_config_can_retain_records_without_a_ttl() -> None:
+    """A durable application operation may outlive every finite task default."""
+    task_config = MCPTaskConfig(default_ttl_ms=None)
+    with TestClient(app=_make_task_app(task_config)) as client:
+        created = _rpc(
+            client,
+            "tools/call",
+            {"name": "optional_task", "arguments": {"delay": 0}},
+            tasks_capable=True,
+        )["result"]
+        completed = _wait_for_status(client, created["taskId"], "completed")
+
+    assert created["ttlMs"] is None
+    assert completed["ttlMs"] is None
+
+
 def test_required_tool_rejects_client_without_extension() -> None:
     with TestClient(app=_make_task_app()) as client:
         response = _rpc(client, "tools/call", {"name": "required_task", "arguments": {"delay": 0}})

@@ -34,6 +34,7 @@ upstream change rebases this branch smaller.
 | --- | --- | --- |
 | CI triggers include `zeno`; fork docs | `8b45dda`, `d78f2a4`, `55d494d` | not for upstream |
 | Pluggable task execution backend: `MCPTaskStore` keeps records + `record_status`; `TaskExecutionBackend` (`start`/`cancel`/`deliver_input`) owns execution; `AsyncioTaskBackend` default preserves 0.13.0 behavior | `284e2fc` | PR candidate (`upstream/task-backend-seam`) |
+| Protocol-standard unlimited task lifetime: `MCPTaskConfig.default_ttl_ms=None` persists `ttlMs: null` records without store expiry for durable application operations | current `zeno.3` wave | task-seam PR candidate |
 | Request-scoped progress: `params._meta.progressToken` threads through `ProgressReporter`; HTTP SSE and stdio deliver notifications on the owning request before its final response, and disconnect cancels dispatch | `c19c21a`, `a80c762` | PR candidate (`upstream/progress-notifications`) |
 | Task subscription conformance: `notifications.taskIds` requires the `io.modelcontextprotocol/tasks` client capability and returns the shared `-32021` payload otherwise | `ad8d1bb` | PR candidate (task seam follow-up) |
 | MCP Apps server contract: official `io.modelcontextprotocol/ui` identifier + `mimeTypes`, `_meta.ui` tool/resource linkage, profile MIME type, capability degradation, and startup validation | `8ec7dd9`, `bf5b07c` | PR candidate (waits on upstream apps posture) |
@@ -47,7 +48,7 @@ upstream change rebases this branch smaller.
 
 Conformance against MCP 2026-07-28, the tasks extension (SEP-2663), and
 the apps extension (SEP-1865) is tracked in the monorepo's
-`docs/plans/mcp-conformance-gap-ledger.md` (G1-G8). The `0.13.0+zeno.2`
+`docs/plans/mcp-conformance-gap-ledger.md` (G1-G8). The `0.13.0+zeno.3`
 wave implements every fork-surface row: G1 request-owned progress, G2
 taskIds gating, G4 honest completions, and G6 the official Apps server
 contract. G3 was retired as an audit error and G8 was already closed;
