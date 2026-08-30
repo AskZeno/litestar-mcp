@@ -138,6 +138,12 @@ class MCPOptKeys:
     Attributes:
         tool: Opt key that marks a route handler as an MCP tool
             (``handler.opt[tool] = "<tool-name>"``).
+        tool_result_blocks: Opt key carrying a callable that maps a
+            handler's serialized response to extra MCP content blocks. A
+            route serving both HTTP and MCP keeps its own response shape
+            while its tool result additionally carries resource links or
+            embedded resources. The callable receives the decoded response
+            body, the same data a client sees.
         resource: Opt key that marks a route handler as an MCP resource.
         resource_uri: Opt key that carries a concrete resource URI override.
         resource_mime_type: Opt key that carries the resource MIME type for
@@ -168,6 +174,7 @@ class MCPOptKeys:
     """
 
     tool: "str" = "mcp_tool"
+    tool_result_blocks: "str" = "mcp_result_blocks"
     flatten_body: "str" = "mcp_flatten_body"
     ui_resource_uri: "str" = "mcp_ui_resource_uri"
     ui_visibility: "str" = "mcp_ui_visibility"

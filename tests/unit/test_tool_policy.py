@@ -262,3 +262,53 @@ def test_resource_reads_go_through_the_same_policy_as_tool_calls() -> None:
     assert hidden["resourceTemplates"] == [], "an unauthenticated request discovers nothing"
     assert json.loads(read["result"]["contents"][0]["text"]) == {"tenant": "acme", "thing_id": "42"}
     assert "error" in denied, "a denied read reports not found, never the resource"
+
+
+def test_a_route_serving_http_and_mcp_declares_provenance_without_changing_its_shape() -> None:
+    """A route in a published HTTP contract cannot change its response to
+    carry resource links, so it declares a mapping from that response to
+    the blocks instead. The HTTP shape is untouched; the tool result gains
+    both channels.
+    """
+
+    class Summary(msgspec.Struct):
+        table_id: str
+        rows: int
+
+    def blocks_for(body: dict[str, Any]) -> list[dict[str, Any]]:
+        # The declaration reads the serialized response, as a client would.
+        return [{"type": "resource_link", "uri": f"sheets://table/{body['table_id']}", "name": "QA table"}]
+
+    @post("/tables", mcp_tool="create_table", mcp_result_blocks=blocks_for, sync_to_thread=False)
+    def create_table() -> Summary:
+        return Summary(table_id="7", rows=3)
+
+    app = Litestar(route_handlers=[create_table], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        http = client.post("/tables").json()
+        result = _rpc(client, "tools/call", {"name": "create_table", "arguments": {}}).json()["result"]
+
+    assert http == {"table_id": "7", "rows": 3}, "the HTTP contract is untouched"
+    assert result["structuredContent"] == {"table_id": "7", "rows": 3}
+    assert [block["type"] for block in result["content"]] == ["text", "resource_link"]
+    assert json.loads(result["content"][0]["text"]) == {"table_id": "7", "rows": 3}
+
+
+def test_a_broken_block_declaration_never_fails_the_call() -> None:
+    """Provenance is additive; losing it must not lose the result."""
+
+    broken = "builder is broken"
+
+    def explode(_value: Any) -> list[dict[str, Any]]:
+        raise RuntimeError(broken)
+
+    @post("/tables", mcp_tool="create_table", mcp_result_blocks=explode, sync_to_thread=False)
+    def create_table() -> dict[str, str]:
+        return {"table_id": "7"}
+
+    app = Litestar(route_handlers=[create_table], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        result = _rpc(client, "tools/call", {"name": "create_table", "arguments": {}}).json()["result"]
+
+    assert result["structuredContent"] == {"table_id": "7"}
+    assert result["isError"] is False

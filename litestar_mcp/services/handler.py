@@ -8,7 +8,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 
-from litestar.serialization import encode_json
+from litestar.exceptions import SerializationException
+from litestar.serialization import decode_json, encode_json
 
 from litestar_mcp._cursor import decode_cursor, encode_cursor
 from litestar_mcp.content import (
@@ -286,12 +287,24 @@ def _retryable_for_status(status_code: "int") -> "bool":
     return status_code not in _TERMINAL_STATUSES
 
 
+def _structured_content(value: "Any") -> "Any | None":
+    """The JSON structure of a handler result, or ``None`` when it has none."""
+    if isinstance(value, (str, bytes, int, float, bool)) or value is None:
+        return None
+    try:
+        decoded = decode_json(encode_json(value))
+    except (SerializationException, TypeError, ValueError):
+        return None
+    return decoded if isinstance(decoded, (dict, list)) else None
+
+
 def _build_tool_result(
     value: "Any",
     *,
     is_error: "bool",
     max_blob_bytes: "int | None" = None,
     retryable: "bool | None" = None,
+    blocks: "Any" = None,
 ) -> "dict[str, Any]":
     try:
         if isinstance(value, MCPInputRequiredResult):
@@ -314,6 +327,16 @@ def _build_tool_result(
             "content": [{"type": "text", "text": _serialize_tool_content(value)}],
             "isError": is_error,
         }
+        # The tools specification has a structured result travel in
+        # `structuredContent`, mirrored as serialized JSON in a text block
+        # for peers that read content alone. A bare scalar has no
+        # structure to declare, so it stays text-only.
+        if not is_error:
+            structured = _structured_content(value)
+            if structured is not None:
+                result["structuredContent"] = structured
+        if blocks:
+            result["content"] = [*result["content"], *normalize_content_blocks(blocks, max_blob_bytes=max_blob_bytes)]
     except (TypeError, ValueError) as exc:
         result = {
             "content": [{"type": "text", "text": _serialize_tool_content({"error": str(exc)})}],
@@ -540,7 +563,12 @@ class MCPHandlerService:
                 retryable=_retryable_for_status(status) if isinstance(status, int) else None,
             )
 
-        return _build_tool_result(result, is_error=False, max_blob_bytes=self.config.max_blob_bytes)
+        return _build_tool_result(
+            result,
+            is_error=False,
+            max_blob_bytes=self.config.max_blob_bytes,
+            blocks=self._declared_result_blocks(handler, result),
+        )
 
     async def server_discover(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         """Describe the modern protocol versions, capabilities, and extensions."""
@@ -814,6 +842,26 @@ class MCPHandlerService:
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
         return result
+
+    def _declared_result_blocks(self, handler: "BaseRouteHandler", value: "Any") -> "Any":
+        """Provenance blocks a handler declares for its own result.
+
+        A route that serves both HTTP and MCP cannot change its response
+        shape to carry resource links, so it declares a mapping from that
+        response to the blocks instead. The builder receives the result as
+        it goes on the wire -- the decoded response body, not the object
+        the handler returned -- so a declaration reads the same data a
+        client would. Failures are swallowed: provenance is additive, and
+        a broken declaration must not fail the call.
+        """
+        builder = (getattr(handler, "opt", None) or {}).get(self.config.opt_keys.tool_result_blocks)
+        if builder is None:
+            return None
+        try:
+            return builder(value)
+        except Exception:
+            _logger.exception("mcp result block builder failed; returning the result without provenance")
+            return None
 
     async def _resource_dispatch_arguments(
         self,
