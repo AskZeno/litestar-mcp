@@ -756,6 +756,7 @@ class MCPHandlerService:
                     "mimeType": _resource_mime_type(handler, self.config, resource_uri),
                 }
             )
+        resources = await self._transform_resource_listing(resources, context)
         try:
             page, next_cursor = _paginate_list(resources, params, self.config.list_page_size)
         except ValueError as exc:
@@ -764,6 +765,20 @@ class MCPHandlerService:
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
         return result
+
+    async def _transform_resource_listing(
+        self,
+        entries: "list[dict[str, Any]]",
+        context: "RequestContext",
+    ) -> "list[dict[str, Any]]":
+        """Let a policy narrow resource discovery for this request."""
+        policy = self.config.tool_policy
+        if policy is None or context.request is None:
+            return entries
+        transform = getattr(policy, "transform_resources", None)
+        if transform is None:
+            return entries
+        return await transform(entries, context.request)
 
     async def resources_templates_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         if self.registry is None:
@@ -790,6 +805,7 @@ class MCPHandlerService:
                     "mimeType": _resource_mime_type(entry.handler, self.config, entry.template),
                 }
             )
+        templates = await self._transform_resource_listing(templates, context)
         try:
             page, next_cursor = _paginate_list(templates, params, self.config.list_page_size)
         except ValueError as exc:
@@ -798,6 +814,31 @@ class MCPHandlerService:
         if next_cursor is not None:
             result["nextCursor"] = next_cursor
         return result
+
+    async def _resource_dispatch_arguments(
+        self,
+        uri: "str",
+        arguments: "dict[str, Any]",
+        context: "RequestContext",
+    ) -> "dict[str, Any]":
+        """Authorize a resource read and resolve its handler arguments.
+
+        The mirror of the tools seam: a policy narrows what a request may
+        read and supplies values the request itself proves (a verified
+        tenant, say) rather than trusting the URI to carry them. Refusal
+        is reported as "not found", matching how tools refuse, so a denial
+        does not disclose that the resource exists.
+        """
+        policy = self.config.tool_policy
+        if policy is None or context.request is None:
+            return arguments
+        allows = getattr(policy, "allows_resource", None)
+        if allows is not None and not await allows(uri, arguments, context.request):
+            raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
+        transform = getattr(policy, "transform_resource_arguments", None)
+        if transform is None:
+            return arguments
+        return await transform(uri, arguments, context.request)
 
     async def resources_read(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         uri = params.get("uri", "")
@@ -833,13 +874,14 @@ class MCPHandlerService:
             if not self._app_resource_visible(uri, context):
                 raise JSONRPCErrorException(mcp_error_for_resource_not_found(uri))
 
+            resource_arguments = await self._resource_dispatch_arguments(uri, {}, context)
             try:
                 token = _request_context.set(context)
                 try:
                     response = await execute_handler_response(
                         handler,
                         self.app_ref,
-                        {},
+                        resource_arguments,
                         request=context.request,
                         scope_overrides=_scope_overrides_for_context(context),
                     )
@@ -875,13 +917,14 @@ class MCPHandlerService:
             handler_tags = set(getattr(entry.handler, "tags", None) or [])
             if not should_include_handler(entry.name, handler_tags, self.config):
                 continue
+            template_arguments = await self._resource_dispatch_arguments(uri, dict(extracted), context)
             try:
                 token = _request_context.set(context)
                 try:
                     response = await execute_handler_response(
                         entry.handler,
                         self.app_ref,
-                        dict(extracted),
+                        template_arguments,
                         request=context.request,
                         scope_overrides=_scope_overrides_for_context(context),
                     )

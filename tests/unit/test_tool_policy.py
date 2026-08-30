@@ -207,3 +207,58 @@ def test_a_handler_may_return_the_specification_result_model_directly() -> None:
     assert result["structuredContent"] == {"id": "7"}
     assert [block["type"] for block in result["content"]] == ["text", "resource_link"]
     assert result["isError"] is False
+
+
+def test_resource_reads_go_through_the_same_policy_as_tool_calls() -> None:
+    """A resource is dispatched to a handler like a tool is, so it needs the
+    same narrowing: discovery is filtered, a denied read reads as not found,
+    and values the request proves are injected rather than taken from the URI.
+    """
+
+    class TenantPolicy:
+        @staticmethod
+        def _tenant(request: Any) -> str:
+            return str(request.headers.get("x-verified-tenant", ""))
+
+        async def transform_tools(self, tools: list[dict[str, Any]], request: Any) -> list[dict[str, Any]]:
+            del request
+            return tools
+
+        async def allows_tool(self, name: str, arguments: dict[str, Any], request: Any) -> bool:
+            del name, arguments, request
+            return True
+
+        async def transform_resources(self, entries: list[dict[str, Any]], request: Any) -> list[dict[str, Any]]:
+            return entries if self._tenant(request) else []
+
+        async def allows_resource(self, uri: str, arguments: dict[str, Any], request: Any) -> bool:
+            del uri
+            return bool(self._tenant(request)) and "tenant" not in arguments
+
+        async def transform_resource_arguments(
+            self, uri: str, arguments: dict[str, Any], request: Any
+        ) -> dict[str, Any]:
+            del uri
+            return {**arguments, "tenant": self._tenant(request)}
+
+    @get(
+        "/things/{tenant:str}/{thing_id:str}",
+        mcp_resource="thing",
+        mcp_resource_template="app://things/{thing_id}",
+        sync_to_thread=False,
+    )
+    def read_thing(tenant: str, thing_id: str) -> dict[str, str]:
+        return {"tenant": tenant, "thing_id": thing_id}
+
+    app = Litestar(route_handlers=[read_thing], plugins=[LitestarMCP(MCPConfig(tool_policy=TenantPolicy()))])
+    with TestClient(app=app) as client:
+        authenticated = {"x-verified-tenant": "acme"}
+        listed = _rpc(client, "resources/templates/list", request_headers=authenticated).json()["result"]
+        hidden = _rpc(client, "resources/templates/list").json()["result"]
+        read = _rpc(client, "resources/read", {"uri": "app://things/42"}, request_headers=authenticated).json()
+        denied = _rpc(client, "resources/read", {"uri": "app://things/42"}).json()
+
+    assert [entry["uriTemplate"] for entry in listed["resourceTemplates"]] == ["app://things/{thing_id}"]
+    assert hidden["resourceTemplates"] == [], "an unauthenticated request discovers nothing"
+    assert json.loads(read["result"]["contents"][0]["text"]) == {"tenant": "acme", "thing_id": "42"}
+    assert "error" in denied, "a denied read reports not found, never the resource"

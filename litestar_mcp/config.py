@@ -68,6 +68,48 @@ class MCPToolArgumentTransform(Protocol):
         """Return the arguments the handler pipeline should dispatch with."""
 
 
+class MCPResourcePolicy(Protocol):
+    """Optional policy hooks mirroring the tool seam for resources.
+
+    Resources are dispatched to the same handlers as tools and need the
+    same request-scoped narrowing: a URI template that carried a tenant
+    would let a caller choose one, and an unauthenticated request should
+    discover nothing it may not read. Implement any of these on a tool
+    policy; each is discovered by name (``getattr``), so a policy that
+    omits them keeps today's behaviour.
+
+    A denied read is reported as "resource not found", matching how a
+    denied tool call is reported, so refusal does not disclose existence.
+    """
+
+    async def transform_resources(
+        self,
+        entries: "list[dict[str, Any]]",
+        request: "Request[Any, Any, Any]",
+    ) -> "list[dict[str, Any]]":
+        """Filter or transform resources and templates visible to a request."""
+
+    async def allows_resource(
+        self,
+        uri: "str",
+        arguments: "dict[str, Any]",
+        request: "Request[Any, Any, Any]",
+    ) -> "bool":
+        """Authorize one read, using the same policy as discovery.
+
+        ``arguments`` are the variables extracted from a URI template, or
+        empty for a static resource.
+        """
+
+    async def transform_resource_arguments(
+        self,
+        uri: "str",
+        arguments: "dict[str, Any]",
+        request: "Request[Any, Any, Any]",
+    ) -> "dict[str, Any]":
+        """Return the arguments the resource handler should dispatch with."""
+
+
 class AfterToolCallHook(Protocol):
     """Callback invoked after an MCP ``tools/call`` dispatch."""
 
