@@ -738,7 +738,7 @@ class MCPHandlerService:
             context.request_state = request_state
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
 
-        await task_backend.start(
+        started = await task_backend.start(
             record,
             TaskInvocation(
                 task_id=record.task_id,
@@ -750,7 +750,7 @@ class MCPHandlerService:
                 progress=self._progress_reporter(context),
             ),
         )
-        return {"resultType": "task", **record.to_dict()}
+        return {"resultType": "task", **(started or record).to_dict()}
 
     async def resources_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         resources = [

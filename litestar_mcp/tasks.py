@@ -9,7 +9,7 @@ writer that persists a record and fans out task-status notifications.
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -47,6 +47,7 @@ class TaskRecord:
     request_state: str | None = None
     result: dict[str, Any] | None = None
     error: JSONRPCError | None = None
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def is_terminal(self) -> bool:
         """Return whether the task has reached a terminal state."""
@@ -63,6 +64,8 @@ class TaskRecord:
         }
         if self.poll_interval_ms is not None:
             payload["pollIntervalMs"] = self.poll_interval_ms
+        if self.meta:
+            payload["_meta"] = self.meta
         if self.status_message is not None:
             payload["statusMessage"] = self.status_message
         if self.input_requests is not None:
@@ -106,7 +109,13 @@ class MCPTaskStore:
         """Set the task-state notification callback."""
         self.status_callback = callback
 
-    async def create(self, owner_id: str | None, ttl_ms: int | None = None) -> TaskRecord:
+    async def create(
+        self,
+        owner_id: str | None,
+        ttl_ms: int | None = None,
+        *,
+        meta: dict[str, Any] | None = None,
+    ) -> TaskRecord:
         """Durably create a task before returning its handle."""
         resolved_ttl = self._resolve_ttl(ttl_ms)
         now = _utc_now()
@@ -119,6 +128,7 @@ class MCPTaskStore:
             ttl_ms=resolved_ttl,
             poll_interval_ms=self.poll_interval_ms,
             status_message="The operation is now in progress.",
+            meta=dict(meta or {}),
         )
         async with self._lock:
             await self._save(record)
@@ -130,13 +140,32 @@ class MCPTaskStore:
         async with self._lock:
             return await self._lookup(task_id, owner_id)
 
-    async def complete(self, task_id: str, result: dict[str, Any]) -> TaskRecord:
+    async def complete(
+        self,
+        task_id: str,
+        result: dict[str, Any],
+        *,
+        meta: dict[str, Any] | None = None,
+    ) -> TaskRecord:
         """Persist a successful tool result."""
-        return await self.record_status(task_id, "completed", result=result, status_message=None)
+        return await self.record_status(task_id, "completed", result=result, status_message=None, meta=meta)
 
-    async def fail(self, task_id: str, error: JSONRPCError, status_message: str | None = None) -> TaskRecord:
+    async def fail(
+        self,
+        task_id: str,
+        error: JSONRPCError,
+        status_message: str | None = None,
+        *,
+        meta: dict[str, Any] | None = None,
+    ) -> TaskRecord:
         """Persist a failed task."""
-        return await self.record_status(task_id, "failed", error=error, status_message=status_message or error.message)
+        return await self.record_status(
+            task_id,
+            "failed",
+            error=error,
+            status_message=status_message or error.message,
+            meta=meta,
+        )
 
     async def require_input(
         self,
@@ -193,9 +222,14 @@ class MCPTaskStore:
             return responses
         return None
 
-    async def mark_cancelled(self, task_id: str) -> TaskRecord:
+    async def mark_cancelled(self, task_id: str, *, meta: dict[str, Any] | None = None) -> TaskRecord:
         """Persist cancellation after the executing work cooperates."""
-        return await self.record_status(task_id, "cancelled", status_message="The task was cancelled.")
+        return await self.record_status(
+            task_id,
+            "cancelled",
+            status_message="The task was cancelled.",
+            meta=meta,
+        )
 
     async def record_status(
         self,
@@ -207,6 +241,7 @@ class MCPTaskStore:
         request_state: str | None = None,
         result: dict[str, Any] | None = None,
         error: JSONRPCError | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> TaskRecord:
         """The one status writer: persist a transition and fan out notifications.
 
@@ -224,6 +259,8 @@ class MCPTaskStore:
             record.request_state = request_state
             record.result = result
             record.error = error
+            if meta is not None:
+                record.meta = {**record.meta, **meta}
             await self._save(record)
         await self._notify(record)
         return record
@@ -295,6 +332,7 @@ def _decode_record(value: bytes) -> TaskRecord:
             if error_payload is not None
             else None
         ),
+        meta=payload.get("_meta") if isinstance(payload.get("_meta"), dict) else {},
     )
 
 

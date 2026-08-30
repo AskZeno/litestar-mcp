@@ -1,4 +1,17 @@
-"""Execution-backend seam tests: records persist in the store, work runs in the backend."""
+"""Execution-backend seam tests: records persist in the store, work runs in the backend.
+
+Contract:
+    Given a task record carries namespaced metadata
+    When its backend updates and terminally settles the task
+    Then CreateTaskResult, tasks/get, and notifications observe the same
+    metadata-preserving record
+
+Invariants:
+    - Metadata updates preserve unrelated namespaces.
+    - Terminal status, metadata, and result/error persist in one record write.
+    - Terminal records never reopen or accept late metadata.
+    - The task store remains product-neutral.
+"""
 
 import json
 import time
@@ -23,6 +36,24 @@ from litestar_mcp.utils import mcp_tool
 
 PROTOCOL_VERSION = "2026-07-28"
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+
+
+class MetadataBackend(TaskExecutionBackend):
+    """Backend that enriches the durable record before its handle is returned."""
+
+    async def start(self, task: TaskRecord, request: TaskInvocation) -> TaskRecord:
+        return await self.store.record_status(
+            task.task_id,
+            "working",
+            status_message="2 of 4",
+            meta={"example.test/progress": {"completed": 2, "total": 4}},
+        )
+
+    async def cancel(self, task_id: str) -> None:
+        await self.store.mark_cancelled(task_id)
+
+    async def deliver_input(self, task_id: str, payload: dict[str, Any]) -> None:
+        return None
 
 
 class RecordingBackend(TaskExecutionBackend):
@@ -100,6 +131,52 @@ def _wait_for_status(client: TestClient[Any], task_id: str, status: str) -> dict
         time.sleep(0.01)
     msg = f"task {task_id} did not reach {status}"
     raise AssertionError(msg)
+
+
+def test_created_handle_and_tasks_get_share_backend_metadata() -> None:
+    backend = MetadataBackend()
+    with TestClient(app=_make_app(backend)) as client:
+        created = _rpc(client, "tools/call", {"name": "work", "arguments": {}})["result"]
+        observed = _rpc(client, "tasks/get", {"taskId": created["taskId"]})["result"]
+
+    expected = {"completed": 2, "total": 4}
+    assert created["_meta"]["example.test/progress"] == expected
+    assert observed["_meta"] == created["_meta"]
+    assert "io.modelcontextprotocol/serverInfo" in created["_meta"]
+
+
+@pytest.mark.anyio
+async def test_metadata_merges_and_terminal_settlement_rejects_late_updates() -> None:
+    notifications: list[dict[str, Any]] = []
+
+    async def capture(record: TaskRecord) -> None:
+        notifications.append(record.to_dict())
+
+    store = MCPTaskStore(status_callback=capture)
+    record = await store.create(owner_id=None)
+    await store.record_status(record.task_id, "working", meta={"example.test/progress": {"completed": 1}})
+    settled = await store.complete(
+        record.task_id,
+        {"resultType": "complete", "content": [], "isError": False},
+        meta={"example.test/resources": [{"uri": "test://resource/1", "edge": "mutated"}]},
+    )
+    late = await store.record_status(
+        record.task_id,
+        "failed",
+        error=JSONRPCError(code=-32603, message="late"),
+        meta={"example.test/progress": {"completed": 0}},
+    )
+    recovered = await store.get(record.task_id, None)
+
+    expected_meta = {
+        "example.test/progress": {"completed": 1},
+        "example.test/resources": [{"uri": "test://resource/1", "edge": "mutated"}],
+    }
+    assert settled.meta == expected_meta
+    assert recovered.meta == expected_meta
+    assert late.status == "completed"
+    assert late.error is None
+    assert notifications[-1]["_meta"] == expected_meta
 
 
 def test_tools_call_launches_created_tasks_through_the_configured_backend() -> None:

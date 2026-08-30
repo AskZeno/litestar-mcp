@@ -19,6 +19,15 @@ Recent Updates
         agent-card discovery routes. Applications can now let another plugin
         own the RFC 9728 root path without a duplicate-route startup failure.
 
+    .. change:: persist task record metadata across every observation path
+        :type: feature
+
+        ``TaskRecord`` now preserves generic namespaced ``_meta`` through task
+        creation handles, ``tasks/get``, and ``notifications/tasks``. Status
+        transitions merge metadata namespaces into the same guarded record
+        write as lifecycle, result, or error state, while terminal records
+        continue rejecting late updates.
+
 .. changelog:: 0.12.0
     :date: 2026-07-29
 

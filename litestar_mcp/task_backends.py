@@ -76,8 +76,8 @@ class TaskExecutionBackend(ABC):
         return self._store
 
     @abstractmethod
-    async def start(self, task: "TaskRecord", request: "TaskInvocation") -> "None":
-        """Launch the work for a created task record."""
+    async def start(self, task: "TaskRecord", request: "TaskInvocation") -> "TaskRecord | None":
+        """Launch work and optionally return task state for the creation handle."""
 
     @abstractmethod
     async def cancel(self, task_id: "str") -> "None":
