@@ -31,6 +31,7 @@ from litestar_mcp.executor import (
     execute_handler,
     execute_handler_response,
     execute_tool,
+    is_specification_result,
 )
 from litestar_mcp.jsonrpc import (
     INTERNAL_ERROR,
@@ -295,6 +296,11 @@ def _build_tool_result(
     try:
         if isinstance(value, MCPInputRequiredResult):
             return value.to_result()
+        if is_specification_result(value):
+            forwarded: dict[str, Any] = value.model_dump(mode="json", by_alias=True, exclude_none=True)
+            forwarded.setdefault("content", [])
+            forwarded["isError"] = bool(is_error or forwarded.get("isError", False))
+            return forwarded
         if isinstance(value, MCPToolResult):
             result = value.to_result(max_blob_bytes=max_blob_bytes)
             result["isError"] = bool(is_error or result.get("isError", False))

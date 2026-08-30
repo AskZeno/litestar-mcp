@@ -311,6 +311,18 @@ async def execute_handler_response(
 execute_handler = execute_tool
 
 
+def is_specification_result(value: "Any") -> "bool":
+    """Whether a handler returned the specification's own tool-result model.
+
+    Handlers that build results against the MCP schema directly (via the
+    published ``mcp-types`` models, or any model with the same shape) know
+    the wire format better than this plugin can infer it, so their output
+    bypasses HTTP response rendering and is forwarded whole. Detected
+    structurally, so the plugin gains no dependency on a models package.
+    """
+    return all(hasattr(value, attribute) for attribute in ("model_dump", "content", "structured_content", "is_error"))
+
+
 async def _run_handler_pipeline(
     handler: "BaseRouteHandler",
     app: "Litestar",
@@ -338,7 +350,9 @@ async def _run_handler_pipeline(
                 handler_fn = ensure_async_callable(handler.fn)
                 raw_result = await handler_fn(**parsed_kwargs)
 
-            if isinstance(raw_result, (MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult)):
+            if is_specification_result(raw_result) or isinstance(
+                raw_result, (MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult)
+            ):
                 return MCPHandlerResponse(
                     content=raw_result,
                     status_code=200,

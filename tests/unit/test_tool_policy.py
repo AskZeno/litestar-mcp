@@ -168,3 +168,42 @@ def test_tool_policy_transform_arguments_injects_trusted_values_before_dispatch(
     assert "error" in smuggled or smuggled["result"].get("isError") is True
     payload = json.loads(injected["result"]["content"][0]["text"])
     assert payload == {"tenant": "ws-good", "data": {"x": 1}}
+
+
+def test_a_handler_may_return_the_specification_result_model_directly() -> None:
+    """A handler that builds an MCP result itself knows the wire format
+    better than the plugin can infer it, so its output is forwarded whole:
+    structured content, provenance blocks, and all.
+    """
+
+    class SpecResult:
+        """Shaped like the published CallToolResult model."""
+
+        content = [
+            {"type": "text", "text": '{"id":"7"}'},
+            {"type": "resource_link", "uri": "sheets://table/7", "name": "QA table"},
+        ]
+        structured_content = {"id": "7"}
+        is_error = False
+
+        def model_dump(self, **_kwargs: Any) -> dict[str, Any]:
+            return {
+                "content": [
+                    {"type": "text", "text": '{"id":"7"}'},
+                    {"type": "resource_link", "uri": "sheets://table/7", "name": "QA table"},
+                ],
+                "structuredContent": {"id": "7"},
+                "isError": False,
+            }
+
+    @post("/build", mcp_tool="build", sync_to_thread=False)
+    def build() -> "Any":
+        return SpecResult()
+
+    app = Litestar(route_handlers=[build], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        result = _rpc(client, "tools/call", {"name": "build", "arguments": {}}).json()["result"]
+
+    assert result["structuredContent"] == {"id": "7"}
+    assert [block["type"] for block in result["content"]] == ["text", "resource_link"]
+    assert result["isError"] is False
