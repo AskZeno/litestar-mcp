@@ -155,9 +155,31 @@ def normalize_content_block(value: "Any", *, max_blob_bytes: "int | None" = None
         block = dict(value)
         _enforce_dict_blob_size(block, max_blob_bytes=max_blob_bytes)
         return block
+    dumped = _dumped_content_block(value)
+    if dumped is not None:
+        _enforce_dict_blob_size(dumped, max_blob_bytes=max_blob_bytes)
+        return dumped
     if isinstance(value, str):
         return {"type": "text", "text": value}
     return {"type": "text", "text": encode_json(value).decode("utf-8")}
+
+
+def _dumped_content_block(value: "Any") -> "dict[str, Any] | None":
+    """A content block built from the published MCP models, as a dict.
+
+    Handlers that assemble blocks from the specification's own models pass
+    them through here rather than hand-writing dicts. Dumped by alias so
+    the wire keeps its camelCase spelling, and without unset fields so an
+    omitted attribute stays omitted.
+    """
+    dump = getattr(value, "model_dump", None)
+    if dump is None:
+        return None
+    try:
+        block = dump(mode="json", by_alias=True, exclude_none=True)
+    except TypeError:  # pragma: no cover -- a model_dump with another signature
+        return None
+    return block if is_content_block(block) else None
 
 
 def _enforce_dict_blob_size(block: "dict[str, Any]", *, max_blob_bytes: "int | None") -> "None":
