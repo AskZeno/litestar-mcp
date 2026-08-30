@@ -270,11 +270,27 @@ def _looks_like_tool_content(value: "Any") -> "bool":
     return False
 
 
+RETRYABLE_META_KEY = "dev.litestar/retryable"
+"""Result ``_meta`` key carrying whether a failed call may be retried as-is.
+
+Stamped on ``isError`` tool results so clients can distinguish terminal
+failures (retrying the same call is pointless — missing resource, revoked
+authority) from repairable or transient ones without parsing error prose.
+"""
+
+_TERMINAL_STATUSES = frozenset({401, 403, 404, 405, 410, 501})
+
+
+def _retryable_for_status(status_code: "int") -> "bool":
+    return status_code not in _TERMINAL_STATUSES
+
+
 def _build_tool_result(
     value: "Any",
     *,
     is_error: "bool",
     max_blob_bytes: "int | None" = None,
+    retryable: "bool | None" = None,
 ) -> "dict[str, Any]":
     try:
         if isinstance(value, MCPInputRequiredResult):
@@ -297,6 +313,9 @@ def _build_tool_result(
             "content": [{"type": "text", "text": _serialize_tool_content({"error": str(exc)})}],
             "isError": True,
         }
+    if retryable is not None and result.get("isError"):
+        meta = result.get("_meta")
+        result["_meta"] = {**(meta if isinstance(meta, dict) else {}), RETRYABLE_META_KEY: retryable}
     return result
 
 
@@ -502,14 +521,17 @@ class MCPHandlerService:
                 err.content,
                 is_error=True,
                 max_blob_bytes=self.config.max_blob_bytes,
+                retryable=_retryable_for_status(err.status_code),
             )
         except JSONRPCErrorException:
             raise
         except Exception as exc:  # noqa: BLE001
+            status = getattr(exc, "status_code", None)
             return _build_tool_result(
                 {"error": str(exc)},
                 is_error=True,
                 max_blob_bytes=self.config.max_blob_bytes,
+                retryable=_retryable_for_status(status) if isinstance(status, int) else None,
             )
 
         return _build_tool_result(result, is_error=False, max_blob_bytes=self.config.max_blob_bytes)

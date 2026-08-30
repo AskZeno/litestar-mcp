@@ -44,7 +44,7 @@ from litestar_mcp.exceptions import (
 from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.progress import ProgressReporter, RequestNotificationStream, progress_params
 from litestar_mcp.routes import MCPController
-from litestar_mcp.services.handler import MCPRequestContext, get_mcp_request_context
+from litestar_mcp.services.handler import RETRYABLE_META_KEY, MCPRequestContext, get_mcp_request_context
 from litestar_mcp.task_backends import AsyncioTaskBackend, TaskExecutionBackend, TaskInvocation
 from litestar_mcp.tasks import MCPTaskStore, TaskRecord
 from litestar_mcp.ui import UI_EXTENSION, UI_MIME_TYPE
@@ -53,6 +53,7 @@ from litestar_mcp.validation import MsgspecToolTypeAdapter, ToolTypeAdapter, Val
 
 __all__ = (
     "MCP",
+    "RETRYABLE_META_KEY",
     "UI_EXTENSION",
     "UI_MIME_TYPE",
     "AfterToolCallHook",

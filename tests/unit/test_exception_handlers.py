@@ -259,3 +259,33 @@ def test_exception_handler_resolves_from_ownership_layer(layer: "str") -> "None"
     text = resp["result"]["content"][0]["text"]
     assert "domain_error" in text, f"custom exception handler did not fire for layer={layer}"
     assert layer in text
+
+
+def test_tool_error_results_carry_the_retryability_meta() -> "None":
+    """Terminal HTTP statuses mark the error result non-retryable; transient
+    and repairable statuses stay retryable — clients stop parsing prose.
+    """
+    from litestar.exceptions import NotFoundException
+
+    conflict = "still processing; wait and retry"
+    missing = "no such document"
+
+    @post("/gone", mcp_tool="gone", sync_to_thread=False)
+    def gone() -> "dict[str, str]":
+        raise NotFoundException(missing)
+
+    @post("/busy", mcp_tool="busy", sync_to_thread=False)
+    def busy() -> "dict[str, str]":
+        from litestar.exceptions import HTTPException
+
+        raise HTTPException(status_code=409, detail=conflict)
+
+    app = Litestar(route_handlers=[gone, busy], plugins=[LitestarMCP()])
+    with TestClient(app=app) as client:
+        gone_result = _call_tool(client, "gone")["result"]
+        busy_result = _call_tool(client, "busy")["result"]
+
+    assert gone_result["isError"] is True
+    assert gone_result["_meta"]["dev.litestar/retryable"] is False
+    assert busy_result["isError"] is True
+    assert busy_result["_meta"]["dev.litestar/retryable"] is True
