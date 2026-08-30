@@ -125,3 +125,46 @@ def test_request_context_carries_the_complete_meta_object() -> None:
 
     payload = json.loads(response["result"]["content"][0]["text"])
     assert payload["example.test/context"] == {"value": 7}
+
+
+def test_tool_policy_transform_arguments_injects_trusted_values_before_dispatch() -> None:
+    """A policy may rewrite call arguments after authorization, e.g. to supply
+    a required path parameter from verified request identity that
+    ``transform_tools`` hid from the advertised schema.
+    """
+
+    class InjectingPolicy:
+        async def transform_tools(self, tools: list[dict[str, Any]], request: Any) -> list[dict[str, Any]]:
+            del request
+            return tools
+
+        async def allows_tool(self, name: str, arguments: dict[str, Any], request: Any) -> bool:
+            del name, request
+            return "tenant" not in arguments
+
+        async def transform_arguments(self, name: str, arguments: dict[str, Any], request: Any) -> dict[str, Any]:
+            del name
+            return {**arguments, "tenant": str(request.headers.get("x-verified-tenant", ""))}
+
+    @post("/echo/{tenant:str}", mcp_tool="echo", sync_to_thread=False)
+    def echo(data: dict[str, Any], tenant: str) -> dict[str, Any]:
+        return {"tenant": tenant, "data": data}
+
+    app = Litestar(route_handlers=[echo], plugins=[LitestarMCP(MCPConfig(tool_policy=InjectingPolicy()))])
+    with TestClient(app=app) as client:
+        smuggled = _rpc(
+            client,
+            "tools/call",
+            {"name": "echo", "arguments": {"tenant": "ws-evil", "data": {"x": 1}}},
+            request_headers={"x-verified-tenant": "ws-good"},
+        ).json()
+        injected = _rpc(
+            client,
+            "tools/call",
+            {"name": "echo", "arguments": {"data": {"x": 1}}},
+            request_headers={"x-verified-tenant": "ws-good"},
+        ).json()
+
+    assert "error" in smuggled or smuggled["result"].get("isError") is True
+    payload = json.loads(injected["result"]["content"][0]["text"])
+    assert payload == {"tenant": "ws-good", "data": {"x": 1}}

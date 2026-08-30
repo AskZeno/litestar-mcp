@@ -48,6 +48,26 @@ class MCPToolPolicy(Protocol):
         """Authorize one call using the same policy as discovery."""
 
 
+class MCPToolArgumentTransform(Protocol):
+    """Optional additional policy hook: rewrite arguments before dispatch.
+
+    Implement ``transform_arguments`` on a tool policy to inject or rewrite
+    call arguments AFTER ``allows_tool`` authorizes the call and BEFORE the
+    handler pipeline runs — e.g. supplying a required path parameter from the
+    verified request identity that ``transform_tools`` hid from the
+    advertised schema. The hook is discovered by name (``getattr``), so
+    policies that do not implement it are unaffected.
+    """
+
+    async def transform_arguments(
+        self,
+        name: "str",
+        arguments: "dict[str, Any]",
+        request: "Request[Any, Any, Any]",
+    ) -> "dict[str, Any]":
+        """Return the arguments the handler pipeline should dispatch with."""
+
+
 class AfterToolCallHook(Protocol):
     """Callback invoked after an MCP ``tools/call`` dispatch."""
 

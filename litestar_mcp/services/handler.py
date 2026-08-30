@@ -151,11 +151,23 @@ def _scope_overrides_for_context(context: "RequestContext") -> "dict[str, Any] |
 
 
 def _effective_policy_arguments(arguments: "Any") -> "dict[str, Any]":
-    """Expose a structured body directly to request-scoped tool policies."""
+    """Expose every caller-supplied argument name to request-scoped policies.
+
+    Structured bodies ride under ``data``; siblings of ``data`` route to path
+    and query parameters. Policies must see BOTH — unwrapping only the body
+    would blind ``allows_tool`` to a smuggled top-level parameter (e.g. a
+    caller-selected ``workspace_id`` beside the body envelope). Top-level
+    names win a collision because they are the transport-routed ones.
+    """
     if not isinstance(arguments, dict):
         return {}
     data = arguments.get("data")
-    return dict(data) if isinstance(data, dict) else dict(arguments)
+    if not isinstance(data, dict):
+        return dict(arguments)
+    merged = dict(data)
+    merged.update({name: value for name, value in arguments.items() if name != "data"})
+    merged.pop("data", None)
+    return merged
 
 
 def _is_resource_text_media_type(mime_type: "str") -> "bool":
@@ -633,6 +645,9 @@ class MCPHandlerService:
                 is_error=True,
                 max_blob_bytes=self.config.max_blob_bytes,
             )
+        transform_arguments = getattr(policy, "transform_arguments", None)
+        if transform_arguments is not None and context.request is not None:
+            tool_args = await transform_arguments(str(tool_name), tool_args, context.request)
 
         task_support = metadata.get("task_support")
         extensions = (context.client_capabilities or {}).get("extensions", {})
