@@ -351,9 +351,9 @@ class MCPConfig:
             the terminal adapter.
         tool_policy: Optional request-scoped policy shared by tools/list and
             tools/call so discovery and execution cannot drift. Optional
-            ``receive_input_partial`` / ``receive_input_cancelled`` methods
-            receive client argument streams for tools advertised with
-            ``mcp_input_partial``.
+            ``receive_input_cancelled`` receives abandoned argument streams.
+            ``notifications/tools/input_partial`` dispatches the marked tool
+            handler with ``MCPRequestContext.is_partial`` set.
         streamable_tools: Optional unofficial streamable-tools extension.
             When set, ``server/discover`` advertises ``extension``, tools
             marked ``mcp_input_partial`` declare ``inputPartial`` in

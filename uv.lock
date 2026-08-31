@@ -1947,7 +1947,7 @@ wheels = [
 
 [[package]]
 name = "litestar-mcp"
-version = "0.13.0+zeno.5"
+version = "0.13.0+zeno.6"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },

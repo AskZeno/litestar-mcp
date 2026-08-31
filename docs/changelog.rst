@@ -25,8 +25,9 @@ Recent Updates
         JSON-RPC notifications (no ``id``) posted to the MCP endpoint now
         return ``202 Accepted`` with an empty body. Unknown methods are
         ignored. Enabling ``MCPConfig.streamable_tools`` advertises tools
-        marked ``mcp_input_partial`` and routes
-        ``notifications/tools/input_partial`` to the tool policy.
+        marked ``mcp_input_partial`` and dispatches
+        ``notifications/tools/input_partial`` through the marked tool
+        handler with ``MCPRequestContext.is_partial`` set.
 
     .. change:: persist task record metadata across every observation path
         :type: feature

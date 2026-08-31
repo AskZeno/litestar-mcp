@@ -92,6 +92,10 @@ class MCPRequestContext:
     ``request.auth`` are the per-request source of truth for tool handlers.
     This struct only carries the scope identifiers used by MCP itself
     (client id, task-owner id, and the live request handle).
+
+    ``is_partial`` is true when this dispatch is a
+    ``notifications/tools/input_partial`` harvest, not a committing
+    ``tools/call``.
     """
 
     client_id: "str"
@@ -107,6 +111,7 @@ class MCPRequestContext:
     progress_token: "str | int | None" = None
     notification_publish: "ProgressPublish | None" = None
     progress: "ProgressReporter" = field(default_factory=ProgressReporter)
+    is_partial: "bool" = False
 
 
 RequestContext = MCPRequestContext
@@ -537,11 +542,26 @@ class MCPHandlerService:
         if method == INPUT_CANCELLED_METHOD:
             await self._receive_input_cancelled(params, context)
 
+    def _partial_stream_id(self, params: "dict[str, Any]") -> "str | None":
+        stream_id = params.get("streamId")
+        meta = params.get("_meta")
+        meta_id: str | None = None
+        streamable = self.config.streamable_tools_config
+        if isinstance(meta, dict) and streamable is not None:
+            value = meta.get(f"{streamable.extension}/streamId")
+            if isinstance(value, str) and value:
+                meta_id = value
+        if isinstance(stream_id, str) and stream_id:
+            if meta_id is not None and meta_id != stream_id:
+                return None
+            return stream_id
+        return meta_id
+
     async def _receive_input_partial(self, params: "dict[str, Any]", context: "RequestContext") -> "None":
         name = params.get("name")
-        stream_id = params.get("streamId")
         arguments = params.get("arguments")
-        if not isinstance(name, str) or not name or not isinstance(stream_id, str) or not stream_id:
+        stream_id = self._partial_stream_id(params)
+        if not isinstance(name, str) or not name or stream_id is None:
             return
         if not isinstance(arguments, dict):
             return
@@ -551,10 +571,38 @@ class MCPHandlerService:
         fn = get_handler_function(handler)
         if not self._tool_accepts_input_partial(handler, fn):
             return
-        receiver = getattr(self.config.tool_policy, "receive_input_partial", None)
-        if receiver is None:
+        handler_tags = set(getattr(handler, "tags", None) or [])
+        if not should_include_handler(name, handler_tags, self.config):
             return
-        await receiver(name, arguments, stream_id, context)
+        policy = self.config.tool_policy
+        tool_args: dict[str, Any] = arguments
+        if policy is not None and context.request is not None:
+            if not await policy.allows_tool(name, _effective_policy_arguments(tool_args), context.request):
+                return
+            transform_arguments = getattr(policy, "transform_arguments", None)
+            if transform_arguments is not None:
+                tool_args = await transform_arguments(name, tool_args, context.request)
+        context.is_partial = True
+        metadata = dict(context.metadata or {})
+        streamable = self.config.streamable_tools_config
+        if streamable is not None:
+            metadata[f"{streamable.extension}/streamId"] = stream_id
+        context.metadata = metadata
+        token = _request_context.set(context)
+        try:
+            await execute_tool(
+                handler,
+                self.app_ref,
+                tool_args,
+                request=context.request,
+                scope_overrides=_scope_overrides_for_context(context),
+                config=self.config,
+                tool_name=name,
+            )
+        except Exception:  # noqa: BLE001 — notifications have no error channel
+            _logger.debug("streamable tool input_partial failed", exc_info=True)
+        finally:
+            _request_context.reset(token)
 
     async def _receive_input_cancelled(self, params: "dict[str, Any]", context: "RequestContext") -> "None":
         name = params.get("name")
