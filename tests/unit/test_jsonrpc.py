@@ -405,10 +405,11 @@ class TestErrorHandling:
 
 
 class TestNotifications:
-    def test_notifications_initialized_is_removed(self, client: "TestClient[Any]") -> "None":
+    def test_notifications_initialized_is_accepted(self, client: "TestClient[Any]") -> "None":
         body = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         resp = client.post("/mcp", json=body)
-        assert resp.status_code == 404
+        assert resp.status_code == 202
+        assert resp.content == b""
 
 
 # ---------------------------------------------------------------------------

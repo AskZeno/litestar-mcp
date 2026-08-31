@@ -19,6 +19,15 @@ Recent Updates
         agent-card discovery routes. Applications can now let another plugin
         own the RFC 9728 root path without a duplicate-route startup failure.
 
+    .. change:: accept client notifications over Streamable HTTP POST
+        :type: feature
+
+        JSON-RPC notifications (no ``id``) posted to the MCP endpoint now
+        return ``202 Accepted`` with an empty body. Unknown methods are
+        ignored; ``MCPConfig.notification_handlers`` runs before that
+        response. Unofficial extension maps on ``MCPConfig.extensions`` are
+        advertised from ``server/discover``.
+
     .. change:: persist task record metadata across every observation path
         :type: feature
 

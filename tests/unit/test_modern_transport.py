@@ -255,7 +255,7 @@ def test_mcp_param_decodes_non_ascii_and_sentinel_shaped_values() -> None:
     assert [response.status_code for response in responses] == [200, 200]
 
 
-def test_client_notification_post_is_rejected_with_a_null_id_error() -> None:
+def test_client_notification_post_is_accepted_with_empty_202() -> None:
     params = {
         "_meta": {
             "io.modelcontextprotocol/protocolVersion": PROTOCOL_VERSION,
@@ -274,12 +274,8 @@ def test_client_notification_post_is_rejected_with_a_null_id_error() -> None:
             },
         )
 
-    assert response.status_code == 400
-    assert response.json() == {
-        "jsonrpc": "2.0",
-        "id": None,
-        "error": {"code": -32602, "message": "Client notifications are not supported over Streamable HTTP"},
-    }
+    assert response.status_code == 202
+    assert response.content == b""
 
 
 def test_missing_required_capability_has_the_standard_payload() -> None:

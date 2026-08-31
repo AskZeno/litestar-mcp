@@ -13,6 +13,7 @@ from litestar.response import ServerSentEvent, ServerSentEventMessage
 from litestar.serialization import decode_json, encode_json
 from litestar.status_codes import (
     HTTP_200_OK,
+    HTTP_202_ACCEPTED,
     HTTP_400_BAD_REQUEST,
     HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
@@ -20,6 +21,7 @@ from litestar.status_codes import (
 
 from litestar_mcp.config import MCPConfig  # noqa: TC001
 from litestar_mcp.jsonrpc import (
+    INTERNAL_ERROR,
     INVALID_PARAMS,
     METHOD_NOT_FOUND,
     PARSE_ERROR,
@@ -264,6 +266,10 @@ def _request_subject(request: "Request[Any, Any, Any]") -> "str | None":
     return None
 
 
+def _rpc_params(rpc_request: "JSONRPCRequest") -> "dict[str, Any]":
+    return rpc_request.params if isinstance(rpc_request.params, dict) else {}
+
+
 def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSONRPCRequest") -> "MCPRequestContext":
     meta = rpc_request.params["_meta"]
     client_info = meta.get("io.modelcontextprotocol/clientInfo")
@@ -284,6 +290,37 @@ def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSON
         request_state=rpc_request.params.get("requestState"),
         progress_token=progress_token,
     )
+
+
+def _build_notification_context(
+    request: "Request[Any, Any, Any] | None",
+    rpc_request: "JSONRPCRequest",
+) -> "MCPRequestContext":
+    params = _rpc_params(rpc_request)
+    meta = params.get("_meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    client_info = meta.get("io.modelcontextprotocol/clientInfo")
+    client_id = client_info.get("name") if isinstance(client_info, dict) else None
+    sub = _request_subject(request) if request is not None else None
+    capabilities = meta.get("io.modelcontextprotocol/clientCapabilities")
+    return MCPRequestContext(
+        client_id=client_id or "anonymous",
+        owner_id=f"user:{sub}" if sub is not None else None,
+        request=request,
+        protocol_version=MCP_PROTOCOL_VERSION,
+        client_capabilities=capabilities if isinstance(capabilities, dict) else None,
+        client_info=client_info if isinstance(client_info, dict) else None,
+        metadata=dict(meta),
+        input_responses=params.get("inputResponses"),
+        request_state=params.get("requestState"),
+    )
+
+
+def _accepted_notification() -> "Response[Any]":
+    response = Response(content=b"", status_code=HTTP_202_ACCEPTED)
+    response.headers[MCP_PROTOCOL_VERSION_HEADER] = MCP_PROTOCOL_VERSION
+    return response
 
 
 def _build_cached_router(
@@ -498,12 +535,6 @@ class MCPController(Controller):
                 data=exc.error.data,
                 status_code=HTTP_400_BAD_REQUEST,
             )
-        metadata_error = _request_metadata_error(request, rpc_request, discovered_tools, type_adapters)
-        if metadata_error is not None:
-            return metadata_error
-        if rpc_request.method == "subscriptions/listen":
-            return await _subscription_response(rpc_request, registry, config)
-
         app = request.app
         if not hasattr(app.state, "mcp_router"):
             app.state.mcp_router = _build_cached_router(
@@ -518,6 +549,27 @@ class MCPController(Controller):
                 type_adapters,
             )
         router: JSONRPCRouter = app.state.mcp_router
+        if rpc_request.is_notification:
+            handler = config.notification_handlers.get(rpc_request.method)
+            if handler is not None:
+                try:
+                    await handler(
+                        _rpc_params(rpc_request),
+                        _build_notification_context(request, rpc_request),
+                    )
+                except Exception:
+                    return _error(
+                        None,
+                        code=INTERNAL_ERROR,
+                        message="Internal error",
+                        status_code=HTTP_400_BAD_REQUEST,
+                    )
+            return _accepted_notification()
+        metadata_error = _request_metadata_error(request, rpc_request, discovered_tools, type_adapters)
+        if metadata_error is not None:
+            return metadata_error
+        if rpc_request.method == "subscriptions/listen":
+            return await _subscription_response(rpc_request, registry, config)
         if rpc_request.method not in router.methods:
             return _error(
                 rpc_request.id,
@@ -526,17 +578,13 @@ class MCPController(Controller):
                 status_code=HTTP_404_NOT_FOUND,
             )
         request_context = _build_request_context(request, rpc_request)
-        if (
-            not rpc_request.is_notification
-            and request_context.progress_token is not None
-            and _accepts_event_stream(request)
-        ):
+        if request_context.progress_token is not None and _accepts_event_stream(request):
             notifications = RequestNotificationStream()
             request_context.notification_publish = notifications.publish
 
             async def dispatch_streaming_request() -> "dict[str, Any]":
                 result = await router.dispatch(rpc_request, request_context)
-                if result is None:  # pragma: no cover - guarded by is_notification
+                if result is None:  # pragma: no cover - notifications return above
                     return error_response(
                         rpc_request.id,
                         JSONRPCError(code=INVALID_PARAMS, message="Client notifications are not supported"),
@@ -551,12 +599,7 @@ class MCPController(Controller):
 
         result = await router.dispatch(rpc_request, request_context)
         if result is None:
-            return _error(
-                rpc_request.id,
-                code=INVALID_PARAMS,
-                message="Client notifications are not supported over Streamable HTTP",
-                status_code=HTTP_400_BAD_REQUEST,
-            )
+            return _accepted_notification()
         _finalize_result(result, method=rpc_request.method, app=app, config=config)
         error = result.get("error")
         error_code = error.get("code") if isinstance(error, dict) else None

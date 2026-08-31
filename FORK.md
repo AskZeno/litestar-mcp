@@ -43,6 +43,7 @@ upstream change rebases this branch smaller.
 | Generic product-extension seams: opt-key flat-body schema projection, one request-scoped discovery/invocation policy, and complete request metadata on `MCPRequestContext` | `46303fb` | PR candidate |
 | Handled exception responses run through the synthetic ASGI send lifecycle so request cleanup hooks fire | `09f9bba` | PR candidate |
 | MCP 2026-07-28 conformance sweep pins sentinel headers, notification POST posture, 405s, extension errors, and resource-not-found data | `e3aac34` | test-only upstream candidate |
+| Client notification POST: unknown methods `202` empty body; `MCPConfig.notification_handlers` run before `202`; unofficial `MCPConfig.extensions` advertised on `server/discover` | current `zeno.5` wave | PR candidate (Streamable HTTP 202 posture) |
 
 ## Conformance
 

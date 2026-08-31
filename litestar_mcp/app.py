@@ -28,7 +28,13 @@ from litestar_mcp.jsonrpc import (
 )
 from litestar_mcp.plugin import LitestarMCP
 from litestar_mcp.progress import RequestNotificationStream
-from litestar_mcp.routes import MCP_PROTOCOL_VERSION, _build_cached_router, _finalize_result
+from litestar_mcp.routes import (
+    MCP_PROTOCOL_VERSION,
+    _build_cached_router,
+    _build_notification_context,
+    _finalize_result,
+    _rpc_params,
+)
 from litestar_mcp.services.handler import MCPRequestContext
 
 if TYPE_CHECKING:
@@ -775,11 +781,22 @@ class MCP:
                 await write(error_response(raw.get("id") if isinstance(raw, dict) else None, exc.error))
                 return
 
-            if rpc_request.method == "notifications/cancelled":
-                request_id = rpc_request.params.get("requestId")
-                task = in_flight.get(request_id)
-                if task is not None:
-                    task.cancel()
+            if rpc_request.is_notification:
+                if rpc_request.method == "notifications/cancelled":
+                    request_id = _rpc_params(rpc_request).get("requestId")
+                    task = in_flight.get(request_id)
+                    if task is not None:
+                        task.cancel()
+                    return
+                handler = plugin.config.notification_handlers.get(rpc_request.method)
+                if handler is not None:
+                    try:
+                        await handler(
+                            _rpc_params(rpc_request),
+                            _build_notification_context(None, rpc_request),
+                        )
+                    except Exception:
+                        logger.exception("MCP notification handler %r raised", rpc_request.method)
                 return
 
             meta = rpc_request.params.get("_meta")

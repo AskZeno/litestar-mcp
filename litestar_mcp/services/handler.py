@@ -585,6 +585,7 @@ class MCPHandlerService:
             extensions[TASKS_EXTENSION] = {}
         if self.apps_config is not None:
             extensions[APPS_EXTENSION] = {"mimeTypes": list(self.apps_config.mime_types)}
+        extensions.update(self.config.extensions)
         if extensions:
             capabilities["extensions"] = extensions
         result: dict[str, Any] = {

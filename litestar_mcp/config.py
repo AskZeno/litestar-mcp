@@ -29,6 +29,13 @@ class BeforeToolCallHook(Protocol):
         """Observe a tool call before guards and handler execution."""
 
 
+class MCPNotificationHandler(Protocol):
+    """Handle one client JSON-RPC notification on the MCP session."""
+
+    def __call__(self, params: "dict[str, Any]", context: "Any", /) -> "Awaitable[None]":
+        """Consume a notification. Return value is ignored."""
+
+
 class MCPToolPolicy(Protocol):
     """Optional request-scoped discovery and invocation policy."""
 
@@ -329,6 +336,12 @@ class MCPConfig:
             the terminal adapter.
         tool_policy: Optional request-scoped policy shared by tools/list and
             tools/call so discovery and execution cannot drift.
+        notification_handlers: Optional map of JSON-RPC notification method
+            names to async handlers. Streamable HTTP POSTs for those methods
+            return ``202 Accepted`` with an empty body. Unknown client
+            notifications are accepted the same way and ignored.
+        extensions: Extra entries merged into ``server/discover``
+            ``capabilities.extensions`` after the built-in tasks/apps keys.
     """
 
     base_path: "str" = "/mcp"
@@ -359,6 +372,8 @@ class MCPConfig:
     route_opt: "dict[str, Any] | None" = None
     register_oauth_protected_resource: "bool" = True
     register_agent_card: "bool" = True
+    notification_handlers: "dict[str, MCPNotificationHandler]" = field(default_factory=dict)
+    extensions: "dict[str, dict[str, Any]]" = field(default_factory=dict)
 
     def __post_init__(self) -> "None":
         if self.list_page_size <= 0:
