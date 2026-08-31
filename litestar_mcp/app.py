@@ -35,7 +35,7 @@ from litestar_mcp.routes import (
     _finalize_result,
     _rpc_params,
 )
-from litestar_mcp.services.handler import MCPRequestContext
+from litestar_mcp.services.handler import MCPHandlerService, MCPRequestContext
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -788,15 +788,26 @@ class MCP:
                     if task is not None:
                         task.cancel()
                     return
-                handler = plugin.config.notification_handlers.get(rpc_request.method)
-                if handler is not None:
+                if plugin.config.streamable_tools_config is not None:
                     try:
-                        await handler(
+                        service = MCPHandlerService(
+                            config=plugin.config,
+                            discovered_tools=plugin.discovered_tools,
+                            discovered_resources=plugin.discovered_resources,
+                            discovered_prompts=plugin.discovered_prompts,
+                            app_ref=self.app,
+                            registry=plugin.registry,
+                            task_store=plugin.task_store,
+                            task_backend=plugin.task_backend,
+                            type_adapters=plugin.type_adapters,
+                        )
+                        await service.receive_client_notification(
+                            rpc_request.method,
                             _rpc_params(rpc_request),
                             _build_notification_context(None, rpc_request),
                         )
                     except Exception:
-                        logger.exception("MCP notification handler %r raised", rpc_request.method)
+                        logger.exception("MCP streamable-tools notification %r raised", rpc_request.method)
                 return
 
             meta = rpc_request.params.get("_meta")

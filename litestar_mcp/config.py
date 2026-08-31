@@ -29,11 +29,6 @@ class BeforeToolCallHook(Protocol):
         """Observe a tool call before guards and handler execution."""
 
 
-class MCPNotificationHandler(Protocol):
-    """Handle one client JSON-RPC notification on the MCP session."""
-
-    def __call__(self, params: "dict[str, Any]", context: "Any", /) -> "Awaitable[None]":
-        """Consume a notification. Return value is ignored."""
 
 
 class MCPToolPolicy(Protocol):
@@ -178,6 +173,8 @@ class MCPOptKeys:
         agent_instructions: Opt key for the ``## Instructions`` section.
         when_to_use: Opt key for the ``## When to use`` section.
         returns: Opt key for the ``## Returns`` section.
+        input_partial: Opt key marking a tool as accepting
+            ``notifications/tools/input_partial`` (``True``).
     """
 
     tool: "str" = "mcp_tool"
@@ -204,6 +201,7 @@ class MCPOptKeys:
     agent_instructions: "str" = "mcp_agent_instructions"
     when_to_use: "str" = "mcp_when_to_use"
     returns: "str" = "mcp_returns"
+    input_partial: "str" = "mcp_input_partial"
 
     def for_field(self, field_name: "str", kind: "Literal['tool', 'resource', 'prompt']") -> "str":
         """Return the opt key for ``(field_name, kind)``.
@@ -292,6 +290,23 @@ def normalize_apps_config(value: "bool | MCPAppsConfig") -> "MCPAppsConfig | Non
 
 
 @dataclass
+class MCPStreamableToolsConfig:
+    """Unofficial client→server partial tool-argument notifications.
+
+    ``extension`` is the capability id advertised on ``server/discover`` and
+    used as the tool ``_meta`` key (for example ``law.zeno/streamable-tools``).
+    The library does not invent a reserved ``io.modelcontextprotocol/`` id.
+    """
+
+    extension: "str"
+
+    def __post_init__(self) -> "None":
+        if not self.extension.strip():
+            msg = "streamable_tools.extension must be a non-empty identifier"
+            raise ValueError(msg)
+
+
+@dataclass
 class MCPConfig:
     """Configuration for the Litestar MCP Plugin.
 
@@ -335,13 +350,16 @@ class MCPConfig:
             auto-detects host integrations; msgspec is always appended as
             the terminal adapter.
         tool_policy: Optional request-scoped policy shared by tools/list and
-            tools/call so discovery and execution cannot drift.
-        notification_handlers: Optional map of JSON-RPC notification method
-            names to async handlers. Streamable HTTP POSTs for those methods
-            return ``202 Accepted`` with an empty body. Unknown client
-            notifications are accepted the same way and ignored.
+            tools/call so discovery and execution cannot drift. Optional
+            ``receive_input_partial`` / ``receive_input_cancelled`` methods
+            receive client argument streams for tools advertised with
+            ``mcp_input_partial``.
+        streamable_tools: Optional unofficial streamable-tools extension.
+            When set, ``server/discover`` advertises ``extension``, tools
+            marked ``mcp_input_partial`` declare ``inputPartial`` in
+            ``_meta``, and ``notifications/tools/input_partial`` is accepted.
         extensions: Extra entries merged into ``server/discover``
-            ``capabilities.extensions`` after the built-in tasks/apps keys.
+            ``capabilities.extensions`` after built-in and streamable-tools keys.
     """
 
     base_path: "str" = "/mcp"
@@ -372,7 +390,7 @@ class MCPConfig:
     route_opt: "dict[str, Any] | None" = None
     register_oauth_protected_resource: "bool" = True
     register_agent_card: "bool" = True
-    notification_handlers: "dict[str, MCPNotificationHandler]" = field(default_factory=dict)
+    streamable_tools: "MCPStreamableToolsConfig | None" = None
     extensions: "dict[str, dict[str, Any]]" = field(default_factory=dict)
 
     def __post_init__(self) -> "None":
@@ -401,3 +419,8 @@ class MCPConfig:
     def task_config(self) -> "MCPTaskConfig | None":
         """Return the normalized task configuration, if task support is enabled."""
         return normalize_task_config(self.tasks)
+
+    @property
+    def streamable_tools_config(self) -> "MCPStreamableToolsConfig | None":
+        """The unofficial streamable-tools extension, if enabled."""
+        return self.streamable_tools

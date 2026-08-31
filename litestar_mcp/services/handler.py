@@ -78,6 +78,8 @@ _logger = logging.getLogger(__name__)
 
 MCP_PROTOCOL_VERSION = "2026-07-28"
 TASKS_EXTENSION = "io.modelcontextprotocol/tasks"
+INPUT_PARTIAL_METHOD = "notifications/tools/input_partial"
+INPUT_CANCELLED_METHOD = "notifications/tools/input_cancelled"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 _MAX_COMPLETION_VALUES = 100
 
@@ -515,6 +517,55 @@ class MCPHandlerService:
             payload["visibility"] = list(visibility)
         return payload or None
 
+    def _tool_accepts_input_partial(self, handler: "BaseRouteHandler", fn: "object") -> "bool":
+        metadata = get_mcp_metadata(handler) or get_mcp_metadata(fn) or {}
+        opt = getattr(handler, "opt", None) or {}
+        return bool(metadata.get("input_partial") or opt.get(self.config.opt_keys.input_partial))
+
+    async def receive_client_notification(
+        self,
+        method: "str",
+        params: "dict[str, Any]",
+        context: "RequestContext",
+    ) -> "None":
+        """Handle a client notification. Unknown methods are ignored."""
+        if self.config.streamable_tools_config is None:
+            return
+        if method == INPUT_PARTIAL_METHOD:
+            await self._receive_input_partial(params, context)
+            return
+        if method == INPUT_CANCELLED_METHOD:
+            await self._receive_input_cancelled(params, context)
+
+    async def _receive_input_partial(self, params: "dict[str, Any]", context: "RequestContext") -> "None":
+        name = params.get("name")
+        stream_id = params.get("streamId")
+        arguments = params.get("arguments")
+        if not isinstance(name, str) or not name or not isinstance(stream_id, str) or not stream_id:
+            return
+        if not isinstance(arguments, dict):
+            return
+        handler = self.discovered_tools.get(name)
+        if handler is None:
+            return
+        fn = get_handler_function(handler)
+        if not self._tool_accepts_input_partial(handler, fn):
+            return
+        receiver = getattr(self.config.tool_policy, "receive_input_partial", None)
+        if receiver is None:
+            return
+        await receiver(name, arguments, stream_id, context)
+
+    async def _receive_input_cancelled(self, params: "dict[str, Any]", context: "RequestContext") -> "None":
+        name = params.get("name")
+        stream_id = params.get("streamId")
+        if not isinstance(name, str) or not isinstance(stream_id, str):
+            return
+        receiver = getattr(self.config.tool_policy, "receive_input_cancelled", None)
+        if receiver is None:
+            return
+        await receiver(name, stream_id, params.get("reason"), context)
+
     async def _execute_tool_call(
         self,
         tool_name: "str",
@@ -585,6 +636,9 @@ class MCPHandlerService:
             extensions[TASKS_EXTENSION] = {}
         if self.apps_config is not None:
             extensions[APPS_EXTENSION] = {"mimeTypes": list(self.apps_config.mime_types)}
+        streamable = self.config.streamable_tools_config
+        if streamable is not None:
+            extensions[streamable.extension] = {}
         extensions.update(self.config.extensions)
         if extensions:
             capabilities["extensions"] = extensions
@@ -628,8 +682,14 @@ class MCPHandlerService:
                 annotations.setdefault("scopes", list(metadata["scopes"]))
                 tool_entry["annotations"] = annotations
             ui_meta = self._tool_ui_meta(handler, fn)
+            tool_meta: dict[str, Any] = {}
             if ui_meta is not None and self._client_ui_capable(context):
-                tool_entry["_meta"] = {"ui": ui_meta}
+                tool_meta["ui"] = ui_meta
+            streamable = self.config.streamable_tools_config
+            if streamable is not None and self._tool_accepts_input_partial(handler, fn):
+                tool_meta[streamable.extension] = {"inputPartial": True}
+            if tool_meta:
+                tool_entry["_meta"] = tool_meta
             tools.append(tool_entry)
         policy = self.config.tool_policy
         if policy is not None and context.request is not None:

@@ -550,10 +550,21 @@ class MCPController(Controller):
             )
         router: JSONRPCRouter = app.state.mcp_router
         if rpc_request.is_notification:
-            handler = config.notification_handlers.get(rpc_request.method)
-            if handler is not None:
+            if config.streamable_tools_config is not None:
                 try:
-                    await handler(
+                    service = MCPHandlerService(
+                        config=config,
+                        discovered_tools=discovered_tools,
+                        discovered_resources=discovered_resources,
+                        discovered_prompts=discovered_prompts,
+                        app_ref=app,
+                        registry=registry,
+                        task_store=task_store,
+                        task_backend=task_backend,
+                        type_adapters=type_adapters,
+                    )
+                    await service.receive_client_notification(
+                        rpc_request.method,
                         _rpc_params(rpc_request),
                         _build_notification_context(request, rpc_request),
                     )
