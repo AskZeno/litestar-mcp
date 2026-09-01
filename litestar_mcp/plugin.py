@@ -241,14 +241,18 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
         if self._config.apps_config is not None:
             self._validate_ui_contract()
 
+        from litestar_mcp.routes import _router_state_key
+
+        router_state_key = _router_state_key(self._config)
+
         def invalidate_router() -> "None":
             _logger.debug("invalidate_router callback triggered")
-            if hasattr(app.state, "mcp_router"):
-                _logger.debug("Deleting mcp_router from app state")
-                delattr(app.state, "mcp_router")
+            if hasattr(app.state, router_state_key):
+                _logger.debug("Deleting %s from app state", router_state_key)
+                delattr(app.state, router_state_key)
 
         self._registry.register_change_callback(invalidate_router)
-        app.state.mcp_router_invalidation_callback = invalidate_router
+        setattr(app.state, f"{router_state_key}_invalidation_callback", invalidate_router)
         _logger.debug("Registered invalidate_router callback on registry: %s", id(self._registry))
 
     @staticmethod
@@ -265,10 +269,13 @@ class LitestarMCP(InitPluginProtocol, CLIPlugin):
     async def on_shutdown(self, app: "Litestar") -> "None":
         """Clean up resources on application shutdown."""
         _logger.debug("Plugin on_shutdown executing...")
-        callback = getattr(app.state, "mcp_router_invalidation_callback", None)
+        from litestar_mcp.routes import _router_state_key
+
+        callback_key = f"{_router_state_key(self._config)}_invalidation_callback"
+        callback = getattr(app.state, callback_key, None)
         if callback is not None:
             self._registry.unregister_change_callback(callback)
-            delattr(app.state, "mcp_router_invalidation_callback")
+            delattr(app.state, callback_key)
             _logger.debug("Unregistered invalidate_router callback from registry")
         await self._subscription_manager.close_all()
         if self._task_backend is not None:

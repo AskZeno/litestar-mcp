@@ -50,11 +50,11 @@ def test_registry_change_callback_invalidation_logs_are_not_warnings(
         return {"ok": True}
 
     with TestClient(app=app):
-        app.state.mcp_router = object()
+        setattr(app.state, "mcp_router__mcp", object())
         caplog.clear()
         plugin.registry.register_tool("dynamic", dynamic)
 
-        assert not hasattr(app.state, "mcp_router")
+        assert not hasattr(app.state, "mcp_router__mcp")
 
     assert _warning_records(caplog, "litestar_mcp.plugin", "litestar_mcp.registry") == []
 

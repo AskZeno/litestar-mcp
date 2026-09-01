@@ -76,23 +76,23 @@ def test_router_caching_and_invalidation() -> "None":
         result = _rpc(client, "tools/list")
         assert len(result["result"]["tools"]) == 1
 
-        router_1 = getattr(app.state, "mcp_router", None)
+        router_1 = getattr(app.state, "mcp_router__mcp", None)
         assert router_1 is not None
 
         # 2. Second request should reuse the same router instance
         _rpc(client, "tools/list")
-        router_2 = getattr(app.state, "mcp_router", None)
+        router_2 = getattr(app.state, "mcp_router__mcp", None)
         assert router_1 is router_2
 
         # 3. Modify registry dynamically
         plugin.registry.register_tool("dynamic_tool", dynamic_tool)
 
         # Invalidation callback should have deleted the cached router
-        assert not hasattr(app.state, "mcp_router")
+        assert not hasattr(app.state, "mcp_router__mcp")
 
         # 4. Next request should rebuild the router
         result2 = _rpc(client, "tools/list")
-        router_3 = getattr(app.state, "mcp_router", None)
+        router_3 = getattr(app.state, "mcp_router__mcp", None)
         assert router_3 is not None
         assert router_3 is not router_1
 

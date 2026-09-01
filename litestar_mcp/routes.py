@@ -323,6 +323,12 @@ def _accepted_notification() -> "Response[Any]":
     return response
 
 
+def _router_state_key(config: "MCPConfig") -> str:
+    """Per-mount app.state attribute for the cached JSON-RPC router."""
+    suffix = config.base_path.strip("/").replace("/", "_") or "mcp"
+    return f"mcp_router__{suffix}"
+
+
 def _build_cached_router(
     app: "Litestar",
     config: "MCPConfig",
@@ -536,19 +542,27 @@ class MCPController(Controller):
                 status_code=HTTP_400_BAD_REQUEST,
             )
         app = request.app
-        if not hasattr(app.state, "mcp_router"):
-            app.state.mcp_router = _build_cached_router(
-                app,
-                config,
-                discovered_tools,
-                discovered_resources,
-                discovered_prompts,
-                registry,
-                task_store,
-                task_backend,
-                type_adapters,
+        # Two LitestarMCP mounts on one app must not share a router cache:
+        # whichever mount served the first request would otherwise answer for
+        # both, advertising its tool set on the other mount's path.
+        router_state_key = _router_state_key(config)
+        if not hasattr(app.state, router_state_key):
+            setattr(
+                app.state,
+                router_state_key,
+                _build_cached_router(
+                    app,
+                    config,
+                    discovered_tools,
+                    discovered_resources,
+                    discovered_prompts,
+                    registry,
+                    task_store,
+                    task_backend,
+                    type_adapters,
+                ),
             )
-        router: JSONRPCRouter = app.state.mcp_router
+        router: JSONRPCRouter = getattr(app.state, router_state_key)
         if rpc_request.is_notification:
             if config.streamable_tools_config is not None:
                 try:
