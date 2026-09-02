@@ -63,6 +63,26 @@ async def test_resources_read_dispatches_template_uri_with_extracted_vars() -> "
 
 
 @pytest.mark.anyio
+async def test_resources_read_dispatches_wildcard_template_with_nested_path() -> "None":
+    """A canonical file URI reaches one handler without encoding separators."""
+
+    @get(
+        "/files/{path:path}",
+        mcp_resource="file",
+        mcp_resource_template="file:///{path*}",
+        sync_to_thread=False,
+    )
+    def handler(path: "str") -> "dict[str, str]":
+        return {"path": path}
+
+    async with AsyncTestClient(app=_app(handler)) as client:
+        resp = await _rpc(client, "resources/read", {"uri": "file:///Matters/Acme/scan.png"})
+
+    content = resp["result"]["contents"][0]["text"]
+    assert '"path":"Matters/Acme/scan.png"' in content or '"path": "Matters/Acme/scan.png"' in content
+
+
+@pytest.mark.anyio
 async def test_resources_read_unknown_uri_returns_error() -> "None":
     @get(
         "/wf/{wid:str}",

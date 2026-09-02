@@ -11,6 +11,13 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
+    .. change:: match wildcard resource-template paths
+        :type: feature
+
+        Resource templates now accept ``{path*}`` variables that preserve
+        nested URI paths across ``resources/read`` dispatch and template
+        expansion. Ordinary ``{var}`` parameters remain single-segment.
+
     .. change:: configure MCP router options and discovery route ownership
         :type: feature
 

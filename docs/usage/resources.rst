@@ -51,7 +51,7 @@ Resource URI Templates
 ======================
 
 Pass ``mcp_resource_template="scheme://path/{var}"`` alongside
-``mcp_resource`` to register an `RFC 6570 Level 1
+``mcp_resource`` to register an `RFC 6570
 <https://datatracker.ietf.org/doc/html/rfc6570>`_ URI template. Clients
 can then request concrete URIs that match the template, and the plugin
 passes the extracted variables straight through to the handler the same
@@ -79,7 +79,10 @@ JSON-RPC method, and concrete URIs flow through ``resources/read``:
        "text":"{\"workspace\":\"42\",\"file\":\"99\"}"}]}}
 
 ``{var}`` matches a single non-empty path segment — it does NOT cross
-``/``. Ambiguous templates resolve to the first-registered match. The
+``/``. Use ``{path*}`` when one handler parameter owns a non-empty nested
+path, for example ``file:///{path*}`` matching
+``file:///Matters/Acme/scan.png`` as ``path="Matters/Acme/scan.png"``.
+Ambiguous templates resolve to the first-registered match. The
 ``completion/complete`` JSON-RPC method is available but returns an empty
 completion by default; user-supplied completion is planned but not yet
 exposed through a stable API.

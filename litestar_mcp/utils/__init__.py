@@ -6,8 +6,9 @@ This module is the single home for handler-introspection helpers
 MCP metadata decorators (``@mcp_tool``, ``@mcp_resource``, ``@mcp_prompt``,
 ``get_mcp_metadata``, ``MetadataRegistry``), LLM-facing description
 rendering (``render_description``, ``extract_description_sources``,
-``DescriptionSources``), and the RFC 6570 Level 1 URI template helpers
-(``parse_template``, ``match_uri``, ``expand_template``). Before v0.5.0
+``DescriptionSources``), and the RFC 6570 URI template helpers
+(``parse_template``, ``match_uri``, ``expand_template``), including wildcard
+path variables (``{path*}``). Before v0.5.0
 these lived in separate modules (``filters.py``, ``decorators.py``,
 ``_descriptions.py``, ``_uri_template.py``); they are now flattened into
 this single module.
@@ -30,7 +31,7 @@ if TYPE_CHECKING:
 F = TypeVar("F", bound=Callable[..., Any])
 Kind = Literal["tool", "resource", "prompt"]
 _STRUCTURED_FIELDS: "tuple[str, str, str]" = ("when_to_use", "returns", "agent_instructions")
-_VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)(\*)?\}")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
@@ -485,7 +486,7 @@ def parse_template(template: "str") -> "list[Segment]":
     for match in _VAR_RE.finditer(template):
         if match.start() > pos:
             segments.append(_Literal(template[pos : match.start()]))
-        segments.append(_Variable(match.group(1)))
+        segments.append(_Variable(match.group(1), wildcard=match.group(2) is not None))
         pos = match.end()
     if pos < len(template):
         segments.append(_Literal(template[pos:]))
@@ -524,7 +525,7 @@ def match_uri(template: "str", uri: "str") -> "dict[str, str] | None":
             if idx < 0:
                 return None
             value, rest = remaining[:idx], remaining[idx:]
-        if not value or "/" in value:
+        if not value or (not seg.wildcard and "/" in value):
             return None
         values[seg.name] = value
         remaining = rest
@@ -584,6 +585,7 @@ def _read_field(
 @dataclass(frozen=True, slots=True)
 class _Variable:
     name: "str"
+    wildcard: "bool" = False
 
 
 @dataclass(frozen=True, slots=True)

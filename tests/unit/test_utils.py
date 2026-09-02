@@ -69,6 +69,16 @@ class TestURITemplateMatch:
     def test_var_at_end_takes_rest(self) -> "None":
         assert match_uri("app://w/{suffix}", "app://w/some-id") == {"suffix": "some-id"}
 
+    def test_wildcard_var_crosses_path_segments(self) -> "None":
+        """A wildcard template preserves a canonical nested resource path."""
+        assert match_uri("file:///{path*}", "file:///Matters/Acme/scan.png") == {"path": "Matters/Acme/scan.png"}
+
+    def test_wildcard_var_stops_at_the_next_literal(self) -> "None":
+        assert match_uri("app://w/{path*}/raw", "app://w/a/b/raw") == {"path": "a/b"}
+
+    def test_empty_wildcard_var_is_rejected(self) -> "None":
+        assert match_uri("file:///{path*}", "file:///") is None
+
 
 class TestURITemplateExpand:
     def test_expand_simple(self) -> "None":
@@ -80,6 +90,11 @@ class TestURITemplateExpand:
     def test_missing_var_raises(self) -> "None":
         with pytest.raises(KeyError):
             expand_template("app://w/{id}", {})
+
+    def test_expand_wildcard_path(self) -> "None":
+        assert expand_template("file:///{path*}", {"path": "Matters/Acme/scan.png"}) == (
+            "file:///Matters/Acme/scan.png"
+        )
 
 
 class TestURITemplateParse:
