@@ -42,6 +42,7 @@ upstream change rebases this branch smaller.
 | Pluggable tool type adapters shared by validation and JSON Schema; msgspec terminal default, guarded Pydantic integration with host auto-detection, UUID format support, and root-valid model definitions | `f7fc013`, `bc3cf4f` | PR candidate |
 | Generic product-extension seams: opt-key flat-body schema projection, one request-scoped discovery/invocation policy, and complete request metadata on `MCPRequestContext` | `46303fb` | PR candidate |
 | Handled exception responses run through the synthetic ASGI send lifecycle so request cleanup hooks fire | `09f9bba` | PR candidate |
+| Specification tool results run the send lifecycle without losing their wire shape; typed decorator/opt behavioral hints share existing annotations; additive block-builder failures warn without payloads or tracebacks | post-`zeno.6` hardening wave | PR candidate |
 | MCP 2026-07-28 conformance sweep pins sentinel headers, notification POST posture, 405s, extension errors, and resource-not-found data | `e3aac34` | test-only upstream candidate |
 | Client notification POST returns `202`; `MCPConfig.streamable_tools` advertises `mcp_input_partial` tools; `notifications/tools/input_partial` dispatches the tool handler with `MCPRequestContext.is_partial` | current `zeno.6` wave | PR candidate (Streamable HTTP 202 posture) |
 

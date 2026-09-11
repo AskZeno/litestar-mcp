@@ -20,7 +20,12 @@ The opt-key names used to mark Litestar route handlers as MCP tools,
 resources, or prompts. Field defaults match the documented kwargs
 (``mcp_tool``, ``mcp_resource``, ``mcp_prompt``, ``mcp_prompt_description``,
 ``mcp_prompt_title``, ``mcp_prompt_arguments``, ``mcp_prompt_icons``, …);
-override the dataclass to remap a project to non-default opt keys.
+override the dataclass to remap a project to non-default opt keys. The
+``read_only_hint``, ``destructive_hint``, ``idempotent_hint``, and
+``open_world_hint`` fields default to ``mcp_read_only_hint``,
+``mcp_destructive_hint``, ``mcp_idempotent_hint``, and ``mcp_open_world_hint``.
+These boolean route declarations populate the existing tool annotations;
+see :doc:`/usage/tools` for precedence and decorator equivalents.
 
 .. autoclass:: MCPOptKeys
    :members:

@@ -5,6 +5,7 @@ import base64
 import contextvars
 import inspect
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 
@@ -82,6 +83,14 @@ INPUT_PARTIAL_METHOD = "notifications/tools/input_partial"
 INPUT_CANCELLED_METHOD = "notifications/tools/input_cancelled"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 _MAX_COMPLETION_VALUES = 100
+_LOG_IDENTIFIER_MAX_LENGTH = 128
+
+
+def _log_identifier(value: "object") -> "str":
+    """Bound identifying labels without formatting arbitrary objects or control characters."""
+    if not isinstance(value, str):
+        return "unknown"
+    return re.sub(r"[^A-Za-z0-9_.:-]", "_", value[:_LOG_IDENTIFIER_MAX_LENGTH])
 
 
 @dataclass
@@ -599,7 +608,7 @@ class MCPHandlerService:
                 config=self.config,
                 tool_name=name,
             )
-        except Exception:  # noqa: BLE001 — notifications have no error channel
+        except Exception:  # Notifications have no error channel.
             _logger.debug("streamable tool input_partial failed", exc_info=True)
         finally:
             _request_context.reset(token)
@@ -666,7 +675,7 @@ class MCPHandlerService:
             result,
             is_error=False,
             max_blob_bytes=self.config.max_blob_bytes,
-            blocks=self._declared_result_blocks(handler, result),
+            blocks=self._declared_result_blocks(tool_name, handler, result),
         )
 
     async def server_discover(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
@@ -723,11 +732,19 @@ class MCPHandlerService:
             }
             if "output_schema" in metadata:
                 tool_entry["outputSchema"] = metadata["output_schema"]
-            if "annotations" in metadata:
-                tool_entry["annotations"] = metadata["annotations"]
+            annotations = dict(metadata.get("annotations") or {})
+            for field_name, annotation_name in (
+                ("read_only_hint", "readOnlyHint"),
+                ("destructive_hint", "destructiveHint"),
+                ("idempotent_hint", "idempotentHint"),
+                ("open_world_hint", "openWorldHint"),
+            ):
+                hint = handler_opt.get(getattr(self.config.opt_keys, field_name))
+                if isinstance(hint, bool):
+                    annotations[annotation_name] = hint
             if "scopes" in metadata:
-                annotations = tool_entry.get("annotations") or {}
                 annotations.setdefault("scopes", list(metadata["scopes"]))
+            if annotations or "annotations" in metadata or "scopes" in metadata:
                 tool_entry["annotations"] = annotations
             ui_meta = self._tool_ui_meta(handler, fn)
             tool_meta: dict[str, Any] = {}
@@ -915,7 +932,8 @@ class MCPHandlerService:
         transform = getattr(policy, "transform_resources", None)
         if transform is None:
             return entries
-        return await transform(entries, context.request)
+        transformed: list[dict[str, Any]] = await transform(entries, context.request)
+        return transformed
 
     async def resources_templates_list(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         if self.registry is None:
@@ -952,7 +970,7 @@ class MCPHandlerService:
             result["nextCursor"] = next_cursor
         return result
 
-    def _declared_result_blocks(self, handler: "BaseRouteHandler", value: "Any") -> "Any":
+    def _declared_result_blocks(self, tool_name: "str", handler: "BaseRouteHandler", value: "Any") -> "Any":
         """Provenance blocks a handler declares for its own result.
 
         A route that serves both HTTP and MCP cannot change its response
@@ -961,15 +979,20 @@ class MCPHandlerService:
         it goes on the wire -- the decoded response body, not the object
         the handler returned -- so a declaration reads the same data a
         client would. Failures are swallowed: provenance is additive, and
-        a broken declaration must not fail the call.
+        a broken declaration must not fail the call. Only bounded declaration
+        identifiers are logged, never results, arguments, or exception content.
         """
         builder = (getattr(handler, "opt", None) or {}).get(self.config.opt_keys.tool_result_blocks)
         if builder is None:
             return None
         try:
             return builder(value)
-        except Exception:
-            _logger.exception("mcp result block builder failed; returning the result without provenance")
+        except Exception:  # noqa: BLE001 - additive decoration must not fail the call
+            _logger.warning(
+                "mcp result block builder failed; returning the result without provenance (tool=%s opt_key=%s)",
+                _log_identifier(tool_name),
+                _log_identifier(self.config.opt_keys.tool_result_blocks),
+            )
             return None
 
     async def _resource_dispatch_arguments(
@@ -995,7 +1018,8 @@ class MCPHandlerService:
         transform = getattr(policy, "transform_resource_arguments", None)
         if transform is None:
             return arguments
-        return await transform(uri, arguments, context.request)
+        transformed: dict[str, Any] = await transform(uri, arguments, context.request)
+        return transformed
 
     async def resources_read(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         uri = params.get("uri", "")

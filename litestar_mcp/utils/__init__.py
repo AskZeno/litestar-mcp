@@ -152,6 +152,10 @@ def mcp_tool(
     input_schema: "dict[str, Any] | None" = None,
     output_schema: "dict[str, Any] | None" = None,
     annotations: "dict[str, Any] | None" = None,
+    read_only_hint: "bool | None" = None,
+    destructive_hint: "bool | None" = None,
+    idempotent_hint: "bool | None" = None,
+    open_world_hint: "bool | None" = None,
     scopes: "list[str] | None" = None,
     task_support: "str | None" = None,
     task_input_before_start: "bool" = False,
@@ -176,6 +180,17 @@ def mcp_tool(
         input_schema: Optional explicit JSON Schema for the tool input.
         output_schema: Optional JSON Schema for the tool's structured output.
         annotations: Optional metadata annotations (audience, priority, etc.).
+            Typed hints override the same keys in a copy of this mapping.
+        read_only_hint: Optional ``readOnlyHint`` annotation. True declares
+            that the tool does not modify its environment.
+        destructive_hint: Optional ``destructiveHint`` annotation. True
+            declares that a modifying tool may perform destructive updates.
+        idempotent_hint: Optional ``idempotentHint`` annotation. True declares
+            that repeating a call with the same arguments has no added effect.
+        open_world_hint: Optional ``openWorldHint`` annotation. True declares
+            that the tool may interact with an open world of external entities.
+            All four hints are advisory. None omits a hint; False is preserved.
+            Boolean route opt hints override decorator annotations at discovery.
         scopes: Optional list of OAuth scopes advertised as discovery
             metadata (surfaced under ``tools[].annotations.scopes`` in
             ``tools/list``). Scopes are **not** enforced inline — attach a
@@ -230,8 +245,21 @@ def mcp_tool(
             metadata["input_schema"] = input_schema
         if output_schema is not None:
             metadata["output_schema"] = output_schema
-        if annotations is not None:
-            metadata["annotations"] = annotations
+        tool_annotations = dict(annotations) if annotations is not None else {}
+        tool_annotations.update(
+            {
+                key: value
+                for key, value in (
+                    ("readOnlyHint", read_only_hint),
+                    ("destructiveHint", destructive_hint),
+                    ("idempotentHint", idempotent_hint),
+                    ("openWorldHint", open_world_hint),
+                )
+                if value is not None
+            }
+        )
+        if annotations is not None or tool_annotations:
+            metadata["annotations"] = tool_annotations
         if scopes is not None:
             metadata["scopes"] = scopes
         if task_support is not None:

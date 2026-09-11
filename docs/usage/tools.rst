@@ -26,6 +26,36 @@ arguments are unwrapped and their ``Parameter`` constraints
 (``ge`` / ``le`` / ``min_length`` / ``pattern`` / …) flow through into
 the advertised ``inputSchema``.
 
+Tool Hints
+==========
+
+Declare behavioral hints through :func:`~litestar_mcp.mcp_tool` using optional
+``bool | None`` parameters:
+
+.. literalinclude:: /examples/snippets/tool_hints.py
+    :language: python
+    :caption: ``docs/examples/snippets/tool_hints.py``
+    :start-after: # start-example
+    :end-before: # end-example
+    :dedent:
+
+The equivalent route kwargs (or entries in ``opt={...}``) are
+``mcp_read_only_hint``, ``mcp_destructive_hint``, ``mcp_idempotent_hint``, and
+``mcp_open_world_hint``. Rename them with the corresponding
+``MCPOptKeys.read_only_hint``, ``destructive_hint``, ``idempotent_hint``, and
+``open_world_hint`` fields. Standalone ``@mcp.tool(...)`` accepts these same
+route opt keys.
+
+Clients consume these values in ``tools/list`` under
+``tools[].annotations.readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+and ``openWorldHint``. No defaults are materialized: omitted hints remain
+absent, and explicit ``False`` values are preserved. Boolean route opt values
+win over typed decorator hints, which win over the same keys in the existing
+``annotations=`` dictionary. Non-boolean route opt values (including ``None``)
+are ignored, not coerced. Other annotations and scopes are retained; the
+provided annotations dictionary is not mutated. These are advisory metadata,
+not authorization or execution policy.
+
 Explicit Input Schemas
 ======================
 
@@ -108,6 +138,41 @@ later with ``resources/read``. Use :class:`~litestar_mcp.MCPBlobResource` only
 when the bytes need to be embedded immediately in the JSON-RPC response. A
 handler returning raw ``bytes`` directly is treated like an ordinary handler
 return value, not as an implicit blob.
+
+Specification Results and Lifecycle Hooks
+========================================
+
+A structural specification ``CallToolResult`` (with ``model_dump``, ``content``,
+``structured_content``, and ``is_error`` attributes) is forwarded intact,
+including its ``isError``, ``structuredContent``, and ``_meta`` fields. It still
+bypasses HTTP response shaping, including ``after_request`` and type encoders.
+The executor drives one synthetic response through Litestar's ``before_send``
+hooks before ``after_response`` and ``after_tool_call`` observers run. That response has
+an empty body and status 200 for success or 500 for ``is_error=True``, allowing
+status-sensitive transaction hooks to distinguish commit from rollback. The
+synthetic status is not substituted for the specification result.
+
+Required send-hook failures follow the existing exception-handler and terminal
+error-cleanup path; they are not swallowed as observer failures. Unhandled
+failures reach ``after_tool_call`` as the original exception, even if fallback
+cleanup also fails. As with ordinary responses, failure recovery may send a
+separate terminal error response. A returned specification result, including
+``isError=True``, still reaches ``after_tool_call`` as ``result`` with
+``exception=None``.
+
+Declared Result Blocks
+======================
+
+A route can keep its HTTP response shape while declaring extra MCP content
+blocks with ``mcp_result_blocks=builder`` (remappable through
+``MCPOptKeys.tool_result_blocks``). For ordinary handler returns, the synchronous
+builder receives the decoded response body. Explicit specification/helper
+results use their own content blocks. If the builder raises, the result is
+returned without the additional blocks. The ``litestar_mcp.services.handler``
+logger emits one warning identifying only the tool and configured opt key,
+each limited to 128 ASCII identifier characters. It logs no result, arguments,
+exception text, or traceback. This
+is additive result decoration, not an error-result block channel.
 
 Error Contract
 ==============

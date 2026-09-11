@@ -317,7 +317,8 @@ def is_specification_result(value: "Any") -> "bool":
     Handlers that build results against the MCP schema directly (via the
     published ``mcp-types`` models, or any model with the same shape) know
     the wire format better than this plugin can infer it, so their output
-    bypasses HTTP response rendering and is forwarded whole. Detected
+    bypasses HTTP response shaping and is forwarded whole. A separate
+    synthetic response still drives the required send lifecycle. Detected
     structurally, so the plugin gains no dependency on a models package.
     """
     return all(hasattr(value, attribute) for attribute in ("model_dump", "content", "structured_content", "is_error"))
@@ -331,6 +332,7 @@ async def _run_handler_pipeline(
     stack: "AsyncExitStack",
 ) -> "MCPHandlerResponse":
     """Run guards, hooks, dependency resolution, handler dispatch, and response rendering."""
+    raw_result: Any
     try:
         try:
             await _enforce_guards(handler, dispatch_request)
@@ -350,7 +352,18 @@ async def _run_handler_pipeline(
                 handler_fn = ensure_async_callable(handler.fn)
                 raw_result = await handler_fn(**parsed_kwargs)
 
-            if is_specification_result(raw_result) or isinstance(
+            specification_result = is_specification_result(raw_result)
+            if specification_result:
+                # Keep the model intact, but do not bypass transaction/session
+                # hooks on the wrapped send. isError selects rollback semantics
+                # for this synthetic response only, not an exception carrier.
+                lifecycle_response = Response(
+                    content=b"",
+                    status_code=500 if raw_result.is_error else 200,
+                ).to_asgi_response(app=app, request=dispatch_request)
+                await _capture_asgi_response(lifecycle_response, dispatch_request)
+
+            if specification_result or isinstance(
                 raw_result, (MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult)
             ):
                 return MCPHandlerResponse(

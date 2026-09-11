@@ -29,8 +29,6 @@ class BeforeToolCallHook(Protocol):
         """Observe a tool call before guards and handler execution."""
 
 
-
-
 class MCPToolPolicy(Protocol):
     """Optional request-scoped discovery and invocation policy."""
 
@@ -40,6 +38,7 @@ class MCPToolPolicy(Protocol):
         request: "Request[Any, Any, Any]",
     ) -> "list[dict[str, Any]]":
         """Filter or transform tools visible to this request."""
+        ...
 
     async def allows_tool(
         self,
@@ -48,6 +47,7 @@ class MCPToolPolicy(Protocol):
         request: "Request[Any, Any, Any]",
     ) -> "bool":
         """Authorize one call using the same policy as discovery."""
+        ...
 
 
 class MCPToolArgumentTransform(Protocol):
@@ -68,6 +68,7 @@ class MCPToolArgumentTransform(Protocol):
         request: "Request[Any, Any, Any]",
     ) -> "dict[str, Any]":
         """Return the arguments the handler pipeline should dispatch with."""
+        ...
 
 
 class MCPResourcePolicy(Protocol):
@@ -90,6 +91,7 @@ class MCPResourcePolicy(Protocol):
         request: "Request[Any, Any, Any]",
     ) -> "list[dict[str, Any]]":
         """Filter or transform resources and templates visible to a request."""
+        ...
 
     async def allows_resource(
         self,
@@ -102,6 +104,7 @@ class MCPResourcePolicy(Protocol):
         ``arguments`` are the variables extracted from a URI template, or
         empty for a static resource.
         """
+        ...
 
     async def transform_resource_arguments(
         self,
@@ -110,6 +113,7 @@ class MCPResourcePolicy(Protocol):
         request: "Request[Any, Any, Any]",
     ) -> "dict[str, Any]":
         """Return the arguments the resource handler should dispatch with."""
+        ...
 
 
 class AfterToolCallHook(Protocol):
@@ -175,6 +179,10 @@ class MCPOptKeys:
         returns: Opt key for the ``## Returns`` section.
         input_partial: Opt key marking a tool as accepting
             ``notifications/tools/input_partial`` (``True``).
+        read_only_hint: Boolean opt key for the tool's ``readOnlyHint`` annotation.
+        destructive_hint: Boolean opt key for the tool's ``destructiveHint`` annotation.
+        idempotent_hint: Boolean opt key for the tool's ``idempotentHint`` annotation.
+        open_world_hint: Boolean opt key for the tool's ``openWorldHint`` annotation.
     """
 
     tool: "str" = "mcp_tool"
@@ -202,6 +210,10 @@ class MCPOptKeys:
     when_to_use: "str" = "mcp_when_to_use"
     returns: "str" = "mcp_returns"
     input_partial: "str" = "mcp_input_partial"
+    read_only_hint: "str" = "mcp_read_only_hint"
+    destructive_hint: "str" = "mcp_destructive_hint"
+    idempotent_hint: "str" = "mcp_idempotent_hint"
+    open_world_hint: "str" = "mcp_open_world_hint"
 
     def for_field(self, field_name: "str", kind: "Literal['tool', 'resource', 'prompt']") -> "str":
         """Return the opt key for ``(field_name, kind)``.

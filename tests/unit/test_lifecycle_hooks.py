@@ -272,8 +272,7 @@ def test_before_send_fires_for_synthesized_tool_dispatch() -> "None":
         resp = _call_tool(client, "x")
 
     assert resp["result"]["isError"] is False
-    assert ("/x", "http.response.start") in seen
-    assert ("/x", "http.response.body") in seen
+    assert seen == [("/x", "http.response.start"), ("/x", "http.response.body")]
 
 
 # ---------------------------------------------------------------------------
