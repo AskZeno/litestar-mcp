@@ -45,6 +45,7 @@ upstream change rebases this branch smaller.
 | Specification tool results run the send lifecycle without losing their wire shape; typed decorator/opt behavioral hints share existing annotations; additive block-builder failures warn without payloads or tracebacks | post-`zeno.6` hardening wave | PR candidate |
 | MCP 2026-07-28 conformance sweep pins sentinel headers, notification POST posture, 405s, extension errors, and resource-not-found data | `e3aac34` | test-only upstream candidate |
 | Client notification POST returns `202`; `MCPConfig.streamable_tools` advertises `mcp_input_partial` tools; `notifications/tools/input_partial` dispatches the tool handler with `MCPRequestContext.is_partial` | current `zeno.6` wave | PR candidate (Streamable HTTP 202 posture) |
+| RFC 6570 form-style query expansion in resource templates: a trailing `{?name,…}` is parsed, matched (URI split at `?`, declared names read from the query string, undeclared ignored), expanded, listed verbatim, and forwarded to the handler's query parameters by `resources/read`; templates without it keep matching whole URIs | `zeno.7` wave | PR candidate (FastMCP `match_uri_template` parity) |
 
 ## Conformance
 

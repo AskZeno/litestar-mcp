@@ -8,6 +8,7 @@ MCP metadata decorators (``@mcp_tool``, ``@mcp_resource``, ``@mcp_prompt``,
 rendering (``render_description``, ``extract_description_sources``,
 ``DescriptionSources``), and the RFC 6570 URI template helpers
 (``parse_template``, ``match_uri``, ``expand_template``), including wildcard
+and trailing RFC 6570 query-expansion
 path variables (``{path*}``). Before v0.5.0
 these lived in separate modules (``filters.py``, ``decorators.py``,
 ``_descriptions.py``, ``_uri_template.py``); they are now flattened into
@@ -18,6 +19,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from urllib.parse import parse_qs, urlencode
 
 from litestar_mcp.config import MCPOptKeys
 from litestar_mcp.ui import normalized_ui_visibility
@@ -33,6 +35,7 @@ Kind = Literal["tool", "resource", "prompt"]
 _STRUCTURED_FIELDS: "tuple[str, str, str]" = ("when_to_use", "returns", "agent_instructions")
 _VAR_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)(\*)?\}")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_QUERY_RE = re.compile(r"\{\?([A-Za-z_][A-Za-z0-9_]*(?:,[A-Za-z_][A-Za-z0-9_]*)*)\}$")
 
 
 # Public MetadataRegistry and DescriptionSources
@@ -504,10 +507,24 @@ def render_description(
 
 
 def parse_template(template: "str") -> "list[Segment]":
-    """Parse ``template`` into alternating literal + variable segments."""
+    """Parse ``template`` into alternating literal + variable segments.
+
+    A trailing RFC 6570 form-style query expansion ``{?name,other}`` becomes
+    one :class:`_QueryExpansion` segment: its variables are request modifiers
+    carried as ``?name=value`` query parameters, never part of the path.
+    """
     if template.count("{") != template.count("}"):
         msg = f"Unbalanced braces in template: {template!r}"
         raise ValueError(msg)
+
+    query: _QueryExpansion | None = None
+    query_match = _QUERY_RE.search(template)
+    if query_match is not None:
+        query = _QueryExpansion(tuple(query_match.group(1).split(",")))
+        template = template[: query_match.start()]
+        if not template:
+            msg = f"Query expansion needs a path: {template!r}"
+            raise ValueError(msg)
 
     segments: list[Segment] = []
     pos = 0
@@ -527,14 +544,30 @@ def parse_template(template: "str") -> "list[Segment]":
     if not segments:
         msg = f"Empty template: {template!r}"
         raise ValueError(msg)
+    if query is not None:
+        segments.append(query)
     return segments
 
 
 def match_uri(template: "str", uri: "str") -> "dict[str, str] | None":
-    """Match ``uri`` against ``template`` and extract variable values."""
+    """Match ``uri`` against ``template`` and extract variable values.
+
+    When the template declares a query expansion, the URI is split at its
+    first ``?``: the path part matches the path segments and the declared
+    query variables are read from the query string (the first value of each,
+    undeclared parameters ignored). Without a query expansion the URI is
+    matched whole, so a ``?`` stays part of the last variable's value.
+    """
     segments = parse_template(template)
+    query: _QueryExpansion | None = None
+    if segments and isinstance(segments[-1], _QueryExpansion):
+        query = segments[-1]
+        segments = segments[:-1]
     values: dict[str, str] = {}
     remaining = uri
+    query_string = ""
+    if query is not None:
+        remaining, _, query_string = uri.partition("?")
     for i, seg in enumerate(segments):
         if isinstance(seg, _Literal):
             if not remaining.startswith(seg.text):
@@ -560,11 +593,20 @@ def match_uri(template: "str", uri: "str") -> "dict[str, str] | None":
 
     if remaining:
         return None
+    if query is not None and query_string:
+        parsed = parse_qs(query_string, keep_blank_values=False)
+        for name in query.names:
+            if name in parsed:
+                values[name] = parsed[name][0]
     return values
 
 
 def expand_template(template: "str", values: "dict[str, str]") -> "str":
-    """Substitute ``{var}`` placeholders with values from ``values``."""
+    """Substitute ``{var}`` placeholders with values from ``values``.
+
+    Declared query variables are appended as ``?name=value`` pairs when
+    present in ``values``; absent ones are omitted (RFC 6570 form-style).
+    """
     for name in values:
         if not _IDENT_RE.match(name):
             msg = f"Invalid variable name: {name!r}"
@@ -574,6 +616,10 @@ def expand_template(template: "str", values: "dict[str, str]") -> "str":
     for seg in segments:
         if isinstance(seg, _Literal):
             parts.append(seg.text)
+        elif isinstance(seg, _QueryExpansion):
+            pairs = [(name, values[name]) for name in seg.names if name in values]
+            if pairs:
+                parts.append("?" + urlencode(pairs))
         else:
             parts.append(values[seg.name])
     return "".join(parts)
@@ -621,7 +667,14 @@ class _Literal:
     text: "str"
 
 
-Segment = _Variable | _Literal
+@dataclass(frozen=True, slots=True)
+class _QueryExpansion:
+    """A trailing ``{?name,...}`` expansion: request modifiers carried as query parameters."""
+
+    names: "tuple[str, ...]"
+
+
+Segment = _Variable | _Literal | _QueryExpansion
 
 
 __all__ = (

@@ -157,3 +157,32 @@ async def test_ambiguous_templates_resolve_first_registered() -> "None":
     async with AsyncTestClient(app=_app(first, second)) as client:
         resp = await _rpc(client, "resources/read", {"uri": "app://x/42"})
         assert '"which":"first"' in resp["result"]["contents"][0]["text"].replace(" ", "")
+
+
+@pytest.mark.anyio
+async def test_resources_read_forwards_query_expansion_variables_to_handler_query_parameters() -> "None":
+    """A ``{?as_of}`` modifier reaches the handler as an ordinary query parameter."""
+
+    @get(
+        "/law/{legislation_id:str}",
+        mcp_resource="law",
+        mcp_resource_template="app://law/{legislation_id}{?as_of}",
+        sync_to_thread=False,
+    )
+    def handler(legislation_id: "str", as_of: "str | None" = None) -> "dict[str, str | None]":
+        return {"legislation_id": legislation_id, "as_of": as_of}
+
+    async with AsyncTestClient(app=_app(handler)) as client:
+        listed = await _rpc(client, "resources/templates/list")
+        assert any(
+            t["uriTemplate"] == "app://law/{legislation_id}{?as_of}" for t in listed["result"]["resourceTemplates"]
+        )
+
+        dated = await _rpc(client, "resources/read", {"uri": "app://law/bw6?as_of=2020-01-01"})
+        text = dated["result"]["contents"][0]["text"]
+        assert '"as_of":"2020-01-01"' in text or '"as_of": "2020-01-01"' in text
+        assert dated["result"]["contents"][0]["uri"] == "app://law/bw6?as_of=2020-01-01"
+
+        undated = await _rpc(client, "resources/read", {"uri": "app://law/bw6"})
+        text = undated["result"]["contents"][0]["text"]
+        assert '"as_of":null' in text or '"as_of": null' in text

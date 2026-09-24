@@ -97,6 +97,44 @@ class TestURITemplateExpand:
         )
 
 
+class TestURITemplateQueryExpansion:
+    """RFC 6570 form-style ``{?name,...}`` carries request modifiers as query parameters."""
+
+    def test_query_variables_are_read_from_the_query_string(self) -> "None":
+        assert match_uri("app://w/{id}{?as_of}", "app://w/42?as_of=2020-01-01") == {"id": "42", "as_of": "2020-01-01"}
+
+    def test_query_variables_are_optional(self) -> "None":
+        assert match_uri("app://w/{id}{?as_of}", "app://w/42") == {"id": "42"}
+
+    def test_undeclared_query_parameters_are_ignored_and_first_value_wins(self) -> "None":
+        matched = match_uri("app://w/{id}{?as_of,lang}", "app://w/42?lang=nl&x=1&as_of=a&as_of=b")
+        assert matched == {"id": "42", "as_of": "a", "lang": "nl"}
+
+    def test_wildcard_path_stops_at_the_query(self) -> "None":
+        matched = match_uri("lex://{j}/{kind}/{locator*}{?as_of}", "lex://nl/law/BWBR0005289/6:162?as_of=2020-01-01")
+        assert matched == {"j": "nl", "kind": "law", "locator": "BWBR0005289/6:162", "as_of": "2020-01-01"}
+
+    def test_a_template_without_query_expansion_keeps_the_question_mark_in_the_value(self) -> "None":
+        assert match_uri("app://w/{suffix}", "app://w/42?as_of=1") == {"suffix": "42?as_of=1"}
+
+    def test_expand_appends_present_query_variables_only(self) -> "None":
+        assert expand_template("app://w/{id}{?as_of,lang}", {"id": "42", "as_of": "2020-01-01"}) == (
+            "app://w/42?as_of=2020-01-01"
+        )
+        assert expand_template("app://w/{id}{?as_of}", {"id": "42"}) == "app://w/42"
+
+    def test_expand_encodes_query_values(self) -> "None":
+        assert expand_template("app://w/{id}{?q}", {"id": "1", "q": "a b&c"}) == "app://w/1?q=a+b%26c"
+
+    def test_query_expansion_must_be_trailing(self) -> "None":
+        with pytest.raises(ValueError, match=r"[Ii]nvalid"):
+            parse_template("app://w/{?as_of}/{id}")
+
+    def test_query_expansion_needs_a_path(self) -> "None":
+        with pytest.raises(ValueError, match=r"needs a path"):
+            parse_template("{?as_of}")
+
+
 class TestURITemplateParse:
     def test_invalid_var_name_raises(self) -> "None":
         with pytest.raises(ValueError, match=r"[Ii]nvalid|identifier"):

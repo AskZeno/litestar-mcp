@@ -11,6 +11,15 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
+    .. change:: expand query parameters in resource templates
+        :type: feature
+
+        Resource templates accept a trailing RFC 6570 form-style expansion
+        ``{?name,other}``. ``resources/read`` splits the URI at ``?``, reads the
+        declared names from the query string and forwards them to the handler's
+        query parameters; ``expand_template`` appends the present ones.
+        Templates without the expansion keep matching whole URIs.
+
     .. change:: match wildcard resource-template paths
         :type: feature
 
