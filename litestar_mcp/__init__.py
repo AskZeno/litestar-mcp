@@ -32,7 +32,9 @@ from litestar_mcp.config import (
     MCPConfig,
     MCPOptKeys,
     MCPStreamableToolsConfig,
+    MCPTaskAuthorizer,
     MCPTaskConfig,
+    MCPTaskCreatorResolver,
     MCPTaskOwnerResolver,
     MCPToolPolicy,
 )
@@ -48,7 +50,7 @@ from litestar_mcp.progress import ProgressReporter, RequestNotificationStream, p
 from litestar_mcp.routes import MCPController
 from litestar_mcp.services.handler import RETRYABLE_META_KEY, MCPRequestContext, get_mcp_request_context
 from litestar_mcp.task_backends import AsyncioTaskBackend, TaskExecutionBackend, TaskInvocation
-from litestar_mcp.tasks import MCPTaskStore, TaskRecord
+from litestar_mcp.tasks import MCPTaskStore, TaskAccess, TaskAction, TaskRecord
 from litestar_mcp.ui import UI_EXTENSION, UI_MIME_TYPE
 from litestar_mcp.utils import mcp_prompt, mcp_resource, mcp_tool
 from litestar_mcp.validation import MsgspecToolTypeAdapter, ToolTypeAdapter, ValidationIssue
@@ -75,11 +77,13 @@ __all__ = (
     "MCPController",
     "MCPInputRequiredResult",
     "MCPOptKeys",
-    "MCPStreamableToolsConfig",
     "MCPRequestContext",
     "MCPResourceLink",
     "MCPStdioContext",
+    "MCPStreamableToolsConfig",
+    "MCPTaskAuthorizer",
     "MCPTaskConfig",
+    "MCPTaskCreatorResolver",
     "MCPTaskOwnerResolver",
     "MCPTaskStore",
     "MCPToolPolicy",
@@ -89,6 +93,8 @@ __all__ = (
     "OIDCProviderConfig",
     "ProgressReporter",
     "RequestNotificationStream",
+    "TaskAccess",
+    "TaskAction",
     "TaskExecutionBackend",
     "TaskInvocation",
     "TaskRecord",

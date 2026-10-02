@@ -11,6 +11,17 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
+    .. change:: authorize task actions within a shared owner scope
+        :type: feature
+
+        ``MCPTaskConfig.authorizer`` decides each ``tasks/get``,
+        ``tasks/update``, ``tasks/cancel`` and ``subscriptions/listen`` action
+        after the owner check, so a host can key tasks on a shared scope and
+        still gate reads and cancellation by permission. A forbidden action
+        answers "Task access denied" with ``error.data.statusCode`` 403.
+        ``MCPTaskConfig.creator_resolver`` records ``TaskRecord.creator_id`` for
+        provenance; it is persisted but never sent on the wire.
+
     .. change:: scope task records to their owner
         :type: bugfix
 

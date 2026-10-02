@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from litestar.serialization import decode_json, encode_json
@@ -22,9 +22,19 @@ from litestar_mcp.jsonrpc import JSONRPCError
 
 TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
+TaskAction = Literal["get", "listen", "update", "cancel"]
+"""What a requester asks to do with an existing task."""
+
+TaskAccess = Literal["allowed", "not_found", "forbidden"]
+"""A task authorizer's answer: proceed, hide the task, or refuse the action."""
+
 
 class TaskLookupError(ValueError):
     """Raised when a task cannot be found or accessed."""
+
+
+class TaskForbiddenError(ValueError):
+    """Raised when a requester may see a task but not perform the action."""
 
 
 class TaskStateError(ValueError):
@@ -48,6 +58,8 @@ class TaskRecord:
     result: dict[str, Any] | None = None
     error: JSONRPCError | None = None
     meta: dict[str, Any] = field(default_factory=dict)
+    creator_id: str | None = None
+    """Who created the task, for provenance only; persisted, never on the wire."""
 
     def is_terminal(self) -> bool:
         """Return whether the task has reached a terminal state."""
@@ -115,6 +127,7 @@ class MCPTaskStore:
         ttl_ms: int | None = None,
         *,
         meta: dict[str, Any] | None = None,
+        creator_id: str | None = None,
     ) -> TaskRecord:
         """Durably create a task before returning its handle."""
         resolved_ttl = self._resolve_ttl(ttl_ms)
@@ -129,6 +142,7 @@ class MCPTaskStore:
             poll_interval_ms=self.poll_interval_ms,
             status_message="The operation is now in progress.",
             meta=dict(meta or {}),
+            creator_id=creator_id,
         )
         async with self._lock:
             await self._save(record)
@@ -316,6 +330,7 @@ InMemoryTaskStore = MCPTaskStore
 def _encode_record(record: TaskRecord) -> bytes:
     payload = record.to_dict()
     payload["ownerId"] = record.owner_id
+    payload["creatorId"] = record.creator_id
     payload["requestStateInternal"] = record.request_state
     return encode_json(payload)
 
@@ -326,6 +341,7 @@ def _decode_record(value: bytes) -> TaskRecord:
     return TaskRecord(
         task_id=payload["taskId"],
         owner_id=payload.get("ownerId"),
+        creator_id=payload.get("creatorId"),
         status=payload["status"],
         created_at=_parse_datetime(payload["createdAt"]),
         last_updated_at=_parse_datetime(payload["lastUpdatedAt"]),

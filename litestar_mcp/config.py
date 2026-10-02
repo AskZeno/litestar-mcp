@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 
     from litestar import Request
 
+    from litestar_mcp.tasks import TaskAccess, TaskAction, TaskRecord
+
 
 class BeforeToolCallHook(Protocol):
     """Callback invoked before an MCP ``tools/call`` dispatch."""
@@ -127,6 +129,40 @@ class MCPTaskOwnerResolver(Protocol):
 
     def __call__(self, request: "Request[Any, Any, Any]") -> "str | None":
         """Return the request's task owner, or ``None`` when anonymous."""
+        ...
+
+
+class MCPTaskCreatorResolver(Protocol):
+    """Name who created a task, for provenance only.
+
+    The returned string is stored on the record as ``creator_id`` and never
+    leaves the server or takes part in access decisions.
+    """
+
+    def __call__(self, request: "Request[Any, Any, Any]") -> "str | None":
+        """Return the request's creator identity, or ``None`` when it has none."""
+        ...
+
+
+class MCPTaskAuthorizer(Protocol):
+    """Decide whether a requester may act on an existing task.
+
+    Called on ``tasks/get``, ``tasks/update``, ``tasks/cancel`` and for each
+    ``subscriptions/listen`` task id, after the owner check has already found
+    the record for the requester. Return ``"not_found"`` to hide the task (the
+    requester sees the same answer as for an unknown id) and ``"forbidden"``
+    when the requester may see the task but not perform ``action``; listen
+    drops the id in both cases. Requests without an HTTP request (stdio) are
+    not passed through the authorizer, as with ``MCPToolPolicy``.
+    """
+
+    async def __call__(
+        self,
+        request: "Request[Any, Any, Any]",
+        record: "TaskRecord",
+        action: "TaskAction",
+    ) -> "TaskAccess":
+        """Return the requester's access to ``record`` for ``action``."""
         ...
 
 
@@ -263,6 +299,14 @@ class MCPTaskConfig:
     """Derives the task owner from the verified request. ``None`` keys
     ownership on ``scope["auth"]["sub"]`` or ``user.id`` / ``user.sub``; hosts
     whose authenticated identity has another shape supply their own."""
+    creator_resolver: "MCPTaskCreatorResolver | None" = None
+    """Names who created each task (``TaskRecord.creator_id``). Provenance
+    only: the creator gains no access the owner key and authorizer do not
+    already grant."""
+    authorizer: "MCPTaskAuthorizer | None" = None
+    """Gates each action on an existing task beyond the owner check. ``None``
+    lets the owner do everything; hosts whose owner key names a shared scope
+    rather than one principal supply per-action permission checks here."""
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms is not None and self.default_ttl_ms < 0:

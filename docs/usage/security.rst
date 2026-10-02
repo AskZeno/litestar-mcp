@@ -25,6 +25,25 @@ boundary (for example tenant and user) in the returned string. Server-side code
 that must read any record, such as a durable worker, uses
 ``MCPTaskStore.load``.
 
+Sharing tasks across a scope
+----------------------------
+
+The owner key need not name one principal. A host whose tasks belong to a
+shared scope (for example every member of a workspace) returns that scope from
+``owner_resolver`` and supplies ``MCPTaskConfig(authorizer=...)`` to decide each
+action. The authorizer runs after the owner check, so it only ever sees records
+in the requester's scope, and answers ``"allowed"``, ``"not_found"`` (the
+requester sees the same answer as for an unknown task) or ``"forbidden"``.
+A forbidden ``tasks/get``, ``tasks/update`` or ``tasks/cancel`` answers
+``-32602`` "Task access denied" with ``error.data.statusCode`` 403; MCP defines
+no forbidden code, so none is invented. ``subscriptions/listen`` drops every id
+the authorizer does not allow. Stdio dispatch carries no HTTP request and skips
+the authorizer, as it skips ``MCPToolPolicy``.
+
+``MCPTaskConfig(creator_resolver=...)`` records who created each task as
+``TaskRecord.creator_id``. It is provenance only: it is persisted with the
+record, never sent on the wire, and never consulted for access.
+
 That task owner check is transport-level isolation. It does not prove that
 the caller may access the domain object named in the tool arguments. Your
 application must still validate relationships such as:

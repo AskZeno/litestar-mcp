@@ -38,11 +38,12 @@ from litestar_mcp.services.handler import (
     TASKS_EXTENSION,
     MCPHandlerService,
     MCPRequestContext,
+    authorized_task,
     capabilities_declare_extension,
     missing_extension_error,
 )
 from litestar_mcp.task_backends import TaskExecutionBackend  # noqa: TC001
-from litestar_mcp.tasks import MCPTaskStore, TaskLookupError
+from litestar_mcp.tasks import MCPTaskStore, TaskForbiddenError, TaskLookupError
 from litestar_mcp.validation import ToolTypeAdapter  # noqa: TC001 - Litestar resolves DI annotations at runtime
 
 if TYPE_CHECKING:
@@ -279,13 +280,17 @@ async def _owned_task_filter(
     notifications: "dict[str, Any]",
     task_store: "MCPTaskStore | None",
     owner_id: "str | None",
+    request: "Request[Any, Any, Any] | None" = None,
+    config: "MCPConfig | None" = None,
 ) -> "dict[str, Any]":
     """Narrow a listen filter's ``taskIds`` to the tasks ``owner_id`` may see.
 
-    Unknown and foreign ids are dropped rather than refused, so the
-    acknowledgement reports exactly which task streams the listener holds
-    without distinguishing a foreign task from a missing one.
+    Unknown, foreign and authorizer-refused ids are dropped rather than
+    refused, so the acknowledgement reports exactly which task streams the
+    listener holds without distinguishing a foreign task from a missing one.
     """
+    task_config = config.task_config if config is not None else None
+    authorizer = task_config.authorizer if task_config is not None else None
     task_ids = notifications.get("taskIds")
     if not isinstance(task_ids, list):
         return notifications
@@ -294,8 +299,8 @@ async def _owned_task_filter(
         if not isinstance(task_id, str) or task_store is None:
             continue
         try:
-            await task_store.get(task_id, owner_id)
-        except TaskLookupError:
+            await authorized_task(task_store, task_id, owner_id, request, authorizer, "listen")
+        except (TaskLookupError, TaskForbiddenError):
             continue
         owned.append(task_id)
     return {**notifications, "taskIds": owned}
@@ -506,7 +511,9 @@ async def _subscription_response(
                 data=error.data,
                 status_code=HTTP_400_BAD_REQUEST,
             )
-        notifications = await _owned_task_filter(notifications, task_store, _task_owner(request, config))
+        notifications = await _owned_task_filter(
+            notifications, task_store, _task_owner(request, config), request, config
+        )
     try:
         stream_id, stream = await registry.subscription_manager.open(rpc_request.id, notifications)
     except Exception as exc:

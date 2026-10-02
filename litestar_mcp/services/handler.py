@@ -53,7 +53,7 @@ from litestar_mcp.registry import (
 )
 from litestar_mcp.schema_builder import flatten_single_body_schema, generate_schema_for_handler
 from litestar_mcp.task_backends import TaskExecutionBackend, TaskInvocation
-from litestar_mcp.tasks import MCPTaskStore, TaskLookupError
+from litestar_mcp.tasks import MCPTaskStore, TaskForbiddenError, TaskLookupError
 from litestar_mcp.ui import UI_EXTENSION as APPS_EXTENSION
 from litestar_mcp.ui import UI_MIME_TYPE, UI_URI_SCHEME, client_ui_mime_types, normalized_ui_visibility
 from litestar_mcp.utils import (
@@ -72,8 +72,9 @@ if TYPE_CHECKING:
     from litestar import Litestar, Request
     from litestar.handlers import BaseRouteHandler
 
-    from litestar_mcp.config import MCPConfig
+    from litestar_mcp.config import MCPConfig, MCPTaskAuthorizer
     from litestar_mcp.progress import ProgressPublish
+    from litestar_mcp.tasks import TaskAction, TaskRecord
 
 _logger = logging.getLogger(__name__)
 
@@ -84,6 +85,45 @@ INPUT_CANCELLED_METHOD = "notifications/tools/input_cancelled"
 MISSING_REQUIRED_CLIENT_CAPABILITY = -32021
 _MAX_COMPLETION_VALUES = 100
 _LOG_IDENTIFIER_MAX_LENGTH = 128
+
+
+_TASK_NOT_FOUND = "Failed to retrieve task: Task not found"
+
+
+async def authorized_task(
+    task_store: "MCPTaskStore",
+    task_id: "str",
+    owner_id: "str | None",
+    request: "Request[Any, Any, Any] | None",
+    authorizer: "MCPTaskAuthorizer | None",
+    action: "TaskAction",
+) -> "TaskRecord":
+    """Load a task for a requester and hold it to the host's authorizer.
+
+    Raises:
+        TaskLookupError: the task is unknown, owned by another requester, or
+            hidden by the authorizer.
+        TaskForbiddenError: the authorizer refuses ``action`` on a task the
+            requester may see.
+    """
+    record = await task_store.get(task_id, owner_id)
+    if authorizer is None or request is None:
+        return record
+    access = await authorizer(request, record, action)
+    if access == "allowed":
+        return record
+    if access == "forbidden":
+        msg = "Task access denied"
+        raise TaskForbiddenError(msg)
+    raise TaskLookupError(_TASK_NOT_FOUND)
+
+
+def _task_access_error(exc: "TaskLookupError | TaskForbiddenError") -> "JSONRPCErrorException":
+    # MCP defines no forbidden code; the HTTP status rides error.data, as for
+    # every other refusal (error_mapping).
+    if isinstance(exc, TaskForbiddenError):
+        return JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc), data={"statusCode": 403}))
+    return JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc)))
 
 
 def _log_identifier(value: "object") -> "str":
@@ -854,7 +894,11 @@ class MCPHandlerService:
         task_backend = self.task_backend
         if task_store is None or task_backend is None:  # pragma: no cover - narrowed by task_enabled
             return await self._execute_tool_call(tool_name, handler, tool_args, context)
-        record = await task_store.create(context.owner_id)
+        creator_resolver = self.task_config.creator_resolver if self.task_config is not None else None
+        creator_id = (
+            creator_resolver(context.request) if creator_resolver is not None and context.request is not None else None
+        )
+        record = await task_store.create(context.owner_id, creator_id=creator_id)
 
         async def run_tool(
             input_responses: "dict[str, Any] | None",
@@ -1346,6 +1390,12 @@ class MCPHandlerService:
 
         raise JSONRPCErrorException(JSONRPCError(code=INTERNAL_ERROR, message=f"Prompt has no callable: {prompt_name}"))
 
+    async def _authorized_task(self, task_id: "str", context: "RequestContext", action: "TaskAction") -> "TaskRecord":
+        if self.task_store is None:  # pragma: no cover - callers check first
+            raise TaskLookupError(_TASK_NOT_FOUND)
+        authorizer = self.task_config.authorizer if self.task_config is not None else None
+        return await authorized_task(self.task_store, task_id, context.owner_id, context.request, authorizer, action)
+
     async def tasks_get(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
         _require_tasks_capability(context)
         if self.task_store is None:
@@ -1354,9 +1404,9 @@ class MCPHandlerService:
         if not task_id:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
-            record = await self.task_store.get(task_id, context.owner_id)
-        except TaskLookupError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+            record = await self._authorized_task(task_id, context, "get")
+        except (TaskLookupError, TaskForbiddenError) as exc:
+            raise _task_access_error(exc) from exc
         return record.to_dict()
 
     async def tasks_update(self, params: "dict[str, Any]", context: "RequestContext") -> "dict[str, Any]":
@@ -1372,9 +1422,10 @@ class MCPHandlerService:
                 JSONRPCError(code=INVALID_PARAMS, message="The 'inputResponses' parameter must be an object")
             )
         try:
+            await self._authorized_task(task_id, context, "update")
             resume_payload = await self.task_store.update(task_id, context.owner_id, input_responses)
-        except TaskLookupError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+        except (TaskLookupError, TaskForbiddenError) as exc:
+            raise _task_access_error(exc) from exc
         if resume_payload is not None and self.task_backend is not None:
             await self.task_backend.deliver_input(task_id, resume_payload)
         return {}
@@ -1387,9 +1438,9 @@ class MCPHandlerService:
         if not task_id:
             raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message="Missing required param: 'taskId'"))
         try:
-            record = await self.task_store.get(task_id, context.owner_id)
-        except TaskLookupError as exc:
-            raise JSONRPCErrorException(JSONRPCError(code=INVALID_PARAMS, message=str(exc))) from exc
+            record = await self._authorized_task(task_id, context, "cancel")
+        except (TaskLookupError, TaskForbiddenError) as exc:
+            raise _task_access_error(exc) from exc
         if not record.is_terminal() and self.task_backend is not None:
             await self.task_backend.cancel(task_id)
         return {}

@@ -47,6 +47,7 @@ upstream change rebases this branch smaller.
 | Client notification POST returns `202`; `MCPConfig.streamable_tools` advertises `mcp_input_partial` tools; `notifications/tools/input_partial` dispatches the tool handler with `MCPRequestContext.is_partial` | current `zeno.6` wave | PR candidate (Streamable HTTP 202 posture) |
 | RFC 6570 form-style query expansion in resource templates: a trailing `{?name,…}` is parsed, matched (URI split at `?`, declared names read from the query string, undeclared ignored), expanded, listed verbatim, and forwarded to the handler's query parameters by `resources/read`; templates without it keep matching whole URIs | `zeno.7` wave | PR candidate (FastMCP `match_uri_template` parity) |
 | Task ownership: `MCPTaskConfig.owner_resolver` derives the owner from the verified request; an owned record is invisible to anonymous and foreign requesters on `tasks/get`/`update`/`cancel`; `subscriptions/listen` keeps only owned `taskIds`; `MCPTaskStore.load` is the explicit unscoped server-side read | `zeno.8` wave | PR candidate (security) |
+| Task authorizer: `MCPTaskConfig.authorizer` decides `get`/`listen`/`update`/`cancel` after the owner check (`allowed`, `not_found`, or `forbidden` → `-32602` with `data.statusCode` 403); `MCPTaskConfig.creator_resolver` stores off-wire `TaskRecord.creator_id` provenance | `zeno.9` wave | PR candidate (security follow-up) |
 
 ## Conformance
 

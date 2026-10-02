@@ -27,6 +27,20 @@ MCPTaskOwnerResolver
    :members:
    :show-inheritance:
 
+MCPTaskCreatorResolver
+----------------------
+
+.. autoclass:: MCPTaskCreatorResolver
+   :members:
+   :show-inheritance:
+
+MCPTaskAuthorizer
+-----------------
+
+.. autoclass:: MCPTaskAuthorizer
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.app
 
 MCPStdioContext
