@@ -11,8 +11,19 @@ Task Ownership Is Transport Isolation
 =====================================
 
 When MCP task support is enabled, litestar-mcp stores each task with an
-``owner_id`` and only returns that task to the same authenticated principal.
+``owner_id`` and only returns that task to the same authenticated principal:
+``tasks/get``, ``tasks/update`` and ``tasks/cancel`` answer "Task not found" to
+any other principal and to anonymous requests, and ``subscriptions/listen``
+drops task ids the listener does not own from its ``taskIds`` filter.
 Anonymous deployments rely on unguessable bearer-style task IDs.
+
+The owner defaults to ``scope["auth"]["sub"]``, then ``user.id`` /
+``user.sub``. When your authentication publishes another identity shape, pass
+``MCPTaskConfig(owner_resolver=...)`` so ownership keys on the verified
+principal instead of silently becoming anonymous; include every isolation
+boundary (for example tenant and user) in the returned string. Server-side code
+that must read any record, such as a durable worker, uses
+``MCPTaskStore.load``.
 
 That task owner check is transport-level isolation. It does not prove that
 the caller may access the domain object named in the tool arguments. Your

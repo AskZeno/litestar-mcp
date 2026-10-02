@@ -11,6 +11,16 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
+    .. change:: scope task records to their owner
+        :type: bugfix
+
+        ``MCPTaskConfig.owner_resolver`` derives the task owner from the
+        verified request for hosts whose identity is not ``auth["sub"]`` or
+        ``user.id`` / ``user.sub``. An owned task is now invisible to anonymous
+        requests as well as other principals, ``subscriptions/listen`` keeps
+        only the ``taskIds`` the listener owns, and ``MCPTaskStore.load`` is the
+        explicit unscoped read for trusted server-side code.
+
     .. change:: expand query parameters in resource templates
         :type: feature
 

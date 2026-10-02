@@ -33,6 +33,7 @@ from litestar_mcp.config import (
     MCPOptKeys,
     MCPStreamableToolsConfig,
     MCPTaskConfig,
+    MCPTaskOwnerResolver,
     MCPToolPolicy,
 )
 from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
@@ -79,6 +80,7 @@ __all__ = (
     "MCPResourceLink",
     "MCPStdioContext",
     "MCPTaskConfig",
+    "MCPTaskOwnerResolver",
     "MCPTaskStore",
     "MCPToolPolicy",
     "MCPToolResult",

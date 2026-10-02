@@ -116,6 +116,20 @@ class MCPResourcePolicy(Protocol):
         ...
 
 
+class MCPTaskOwnerResolver(Protocol):
+    """Derive the task owner from a verified request.
+
+    The returned string keys every task the request creates and is compared
+    against the stored owner on ``tasks/get``, ``tasks/update``,
+    ``tasks/cancel`` and ``subscriptions/listen``. Return ``None`` only for an
+    anonymous request; such a request can never see an owned task.
+    """
+
+    def __call__(self, request: "Request[Any, Any, Any]") -> "str | None":
+        """Return the request's task owner, or ``None`` when anonymous."""
+        ...
+
+
 class AfterToolCallHook(Protocol):
     """Callback invoked after an MCP ``tools/call`` dispatch."""
 
@@ -245,6 +259,10 @@ class MCPTaskConfig:
     """Owns how created tasks execute. ``None`` selects the in-process
     asyncio runner; durable deployments supply a backend over their own
     execution engine."""
+    owner_resolver: "MCPTaskOwnerResolver | None" = None
+    """Derives the task owner from the verified request. ``None`` keys
+    ownership on ``scope["auth"]["sub"]`` or ``user.id`` / ``user.sub``; hosts
+    whose authenticated identity has another shape supply their own."""
 
     def __post_init__(self) -> "None":
         if self.default_ttl_ms is not None and self.default_ttl_ms < 0:

@@ -33,6 +33,7 @@ from litestar_mcp.routes import (
     _build_cached_router,
     _build_notification_context,
     _finalize_result,
+    _owned_task_filter,
     _rpc_params,
 )
 from litestar_mcp.services.handler import MCPHandlerService, MCPRequestContext
@@ -804,7 +805,7 @@ class MCP:
                         await service.receive_client_notification(
                             rpc_request.method,
                             _rpc_params(rpc_request),
-                            _build_notification_context(None, rpc_request),
+                            _build_notification_context(None, rpc_request, plugin.config),
                         )
                     except Exception:
                         logger.exception("MCP streamable-tools notification %r raised", rpc_request.method)
@@ -856,6 +857,7 @@ class MCP:
                         )
                     )
                     return
+                notifications = await _owned_task_filter(notifications, plugin.task_store, request_context.owner_id)
                 _stream_id, stream = await plugin.registry.subscription_manager.open(rpc_request.id, notifications)
                 async for notification in stream:
                     await write(notification)

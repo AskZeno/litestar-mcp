@@ -42,7 +42,7 @@ from litestar_mcp.services.handler import (
     missing_extension_error,
 )
 from litestar_mcp.task_backends import TaskExecutionBackend  # noqa: TC001
-from litestar_mcp.tasks import MCPTaskStore  # noqa: TC001
+from litestar_mcp.tasks import MCPTaskStore, TaskLookupError
 from litestar_mcp.validation import ToolTypeAdapter  # noqa: TC001 - Litestar resolves DI annotations at runtime
 
 if TYPE_CHECKING:
@@ -266,21 +266,59 @@ def _request_subject(request: "Request[Any, Any, Any]") -> "str | None":
     return None
 
 
+def _task_owner(request: "Request[Any, Any, Any]", config: "MCPConfig") -> "str | None":
+    """The task owner a request acts as, ``None`` when it is anonymous."""
+    task_config = config.task_config
+    if task_config is not None and task_config.owner_resolver is not None:
+        return task_config.owner_resolver(request)
+    sub = _request_subject(request)
+    return f"user:{sub}" if sub is not None else None
+
+
+async def _owned_task_filter(
+    notifications: "dict[str, Any]",
+    task_store: "MCPTaskStore | None",
+    owner_id: "str | None",
+) -> "dict[str, Any]":
+    """Narrow a listen filter's ``taskIds`` to the tasks ``owner_id`` may see.
+
+    Unknown and foreign ids are dropped rather than refused, so the
+    acknowledgement reports exactly which task streams the listener holds
+    without distinguishing a foreign task from a missing one.
+    """
+    task_ids = notifications.get("taskIds")
+    if not isinstance(task_ids, list):
+        return notifications
+    owned: list[str] = []
+    for task_id in task_ids:
+        if not isinstance(task_id, str) or task_store is None:
+            continue
+        try:
+            await task_store.get(task_id, owner_id)
+        except TaskLookupError:
+            continue
+        owned.append(task_id)
+    return {**notifications, "taskIds": owned}
+
+
 def _rpc_params(rpc_request: "JSONRPCRequest") -> "dict[str, Any]":
     return rpc_request.params if isinstance(rpc_request.params, dict) else {}
 
 
-def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSONRPCRequest") -> "MCPRequestContext":
+def _build_request_context(
+    request: "Request[Any, Any, Any]",
+    rpc_request: "JSONRPCRequest",
+    config: "MCPConfig",
+) -> "MCPRequestContext":
     meta = rpc_request.params["_meta"]
     client_info = meta.get("io.modelcontextprotocol/clientInfo")
     client_id = client_info.get("name") if isinstance(client_info, dict) else None
-    sub = _request_subject(request)
     progress_token = meta.get("progressToken")
     if not isinstance(progress_token, (str, int)) or isinstance(progress_token, bool):
         progress_token = None
     return MCPRequestContext(
         client_id=client_id or "anonymous",
-        owner_id=f"user:{sub}" if sub is not None else None,
+        owner_id=_task_owner(request, config),
         request=request,
         protocol_version=MCP_PROTOCOL_VERSION,
         client_capabilities=meta["io.modelcontextprotocol/clientCapabilities"],
@@ -295,6 +333,7 @@ def _build_request_context(request: "Request[Any, Any, Any]", rpc_request: "JSON
 def _build_notification_context(
     request: "Request[Any, Any, Any] | None",
     rpc_request: "JSONRPCRequest",
+    config: "MCPConfig",
 ) -> "MCPRequestContext":
     params = _rpc_params(rpc_request)
     meta = params.get("_meta")
@@ -302,11 +341,10 @@ def _build_notification_context(
         meta = {}
     client_info = meta.get("io.modelcontextprotocol/clientInfo")
     client_id = client_info.get("name") if isinstance(client_info, dict) else None
-    sub = _request_subject(request) if request is not None else None
     capabilities = meta.get("io.modelcontextprotocol/clientCapabilities")
     return MCPRequestContext(
         client_id=client_id or "anonymous",
-        owner_id=f"user:{sub}" if sub is not None else None,
+        owner_id=_task_owner(request, config) if request is not None else None,
         request=request,
         protocol_version=MCP_PROTOCOL_VERSION,
         client_capabilities=capabilities if isinstance(capabilities, dict) else None,
@@ -437,9 +475,11 @@ async def _request_event_stream(
 
 
 async def _subscription_response(
+    request: "Request[Any, Any, Any]",
     rpc_request: "JSONRPCRequest",
     registry: "Registry",
     config: "MCPConfig",
+    task_store: "MCPTaskStore | None",
 ) -> "Response[Any]":
     notifications = rpc_request.params.get("notifications")
     if not isinstance(notifications, dict):
@@ -466,6 +506,7 @@ async def _subscription_response(
                 data=error.data,
                 status_code=HTTP_400_BAD_REQUEST,
             )
+        notifications = await _owned_task_filter(notifications, task_store, _task_owner(request, config))
     try:
         stream_id, stream = await registry.subscription_manager.open(rpc_request.id, notifications)
     except Exception as exc:
@@ -580,7 +621,7 @@ class MCPController(Controller):
                     await service.receive_client_notification(
                         rpc_request.method,
                         _rpc_params(rpc_request),
-                        _build_notification_context(request, rpc_request),
+                        _build_notification_context(request, rpc_request, config),
                     )
                 except Exception:
                     return _error(
@@ -594,7 +635,7 @@ class MCPController(Controller):
         if metadata_error is not None:
             return metadata_error
         if rpc_request.method == "subscriptions/listen":
-            return await _subscription_response(rpc_request, registry, config)
+            return await _subscription_response(request, rpc_request, registry, config, task_store)
         if rpc_request.method not in router.methods:
             return _error(
                 rpc_request.id,
@@ -602,7 +643,7 @@ class MCPController(Controller):
                 message=f"Method not found: {rpc_request.method}",
                 status_code=HTTP_404_NOT_FOUND,
             )
-        request_context = _build_request_context(request, rpc_request)
+        request_context = _build_request_context(request, rpc_request, config)
         if request_context.progress_token is not None and _accepts_event_stream(request):
             notifications = RequestNotificationStream()
             request_context.notification_publish = notifications.publish

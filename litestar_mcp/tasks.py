@@ -136,9 +136,18 @@ class MCPTaskStore:
         return record
 
     async def get(self, task_id: str, owner_id: str | None) -> TaskRecord:
-        """Retrieve a task, enforcing authenticated ownership when present."""
+        """Retrieve a task on behalf of a requester.
+
+        An owned record is returned only to its owner; a different or absent
+        ``owner_id`` sees the same "not found" as an unknown task.
+        """
         async with self._lock:
             return await self._lookup(task_id, owner_id)
+
+    async def load(self, task_id: str) -> TaskRecord:
+        """Retrieve a task for trusted server-side code, without an ownership check."""
+        async with self._lock:
+            return await self._load(task_id)
 
     async def complete(
         self,
@@ -249,7 +258,7 @@ class MCPTaskStore:
         returns the stored record unchanged.
         """
         async with self._lock:
-            record = await self._lookup(task_id, None)
+            record = await self._load(task_id)
             if record.is_terminal():
                 return record
             record.status = status
@@ -266,15 +275,18 @@ class MCPTaskStore:
         return record
 
     async def _lookup(self, task_id: str, owner_id: str | None) -> TaskRecord:
+        record = await self._load(task_id)
+        if record.owner_id is not None and record.owner_id != owner_id:
+            msg = "Failed to retrieve task: Task not found"
+            raise TaskLookupError(msg)
+        return record
+
+    async def _load(self, task_id: str) -> TaskRecord:
         value = await self.store.get(self._key(task_id))
         if value is None:
             msg = "Failed to retrieve task: Task not found"
             raise TaskLookupError(msg)
-        record = _decode_record(value)
-        if owner_id is not None and record.owner_id is not None and record.owner_id != owner_id:
-            msg = "Failed to retrieve task: Task not found"
-            raise TaskLookupError(msg)
-        return record
+        return _decode_record(value)
 
     async def _save(self, record: TaskRecord) -> None:
         expires_in = None if record.ttl_ms is None else max(1, (record.ttl_ms + 999) // 1000)

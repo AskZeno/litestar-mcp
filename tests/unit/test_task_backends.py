@@ -320,6 +320,9 @@ def test_declaring_listeners_keep_their_task_id_filter() -> None:
 
             return "finite", stream()
 
+        async def publish(self, method: str, params: dict[str, Any]) -> None:
+            return None
+
         async def disconnect(self, stream_id: str) -> None:
             return None
 
@@ -327,9 +330,9 @@ def test_declaring_listeners_keep_their_task_id_filter() -> None:
     app = _make_app(backend)
     plugin = next(p for p in app.plugins.init if isinstance(p, LitestarMCP))
     plugin.registry.set_subscription_manager(FiniteSubscriptions())  # type: ignore[arg-type]
-    with (
-        TestClient(app=app) as client,
-        client.stream(
+    with TestClient(app=app) as client:
+        task_id = _rpc(client, "tools/call", {"name": "work", "arguments": {}})["result"]["taskId"]
+        with client.stream(
             "POST",
             "/mcp",
             json={
@@ -342,7 +345,7 @@ def test_declaring_listeners_keep_their_task_id_filter() -> None:
                         "io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS_EXTENSION: {}}},
                         "io.modelcontextprotocol/clientInfo": {"name": "backend-tests", "version": "1"},
                     },
-                    "notifications": {"taskIds": ["task-1"]},
+                    "notifications": {"taskIds": [task_id]},
                 },
             },
             headers={
@@ -350,10 +353,9 @@ def test_declaring_listeners_keep_their_task_id_filter() -> None:
                 "MCP-Protocol-Version": PROTOCOL_VERSION,
                 "Mcp-Method": "subscriptions/listen",
             },
-        ) as response,
-    ):
-        data_line = next(line for line in response.iter_lines() if line.startswith("data: "))
-        payload = json.loads(data_line.partition("data: ")[2])
+        ) as response:
+            data_line = next(line for line in response.iter_lines() if line.startswith("data: "))
+            payload = json.loads(data_line.partition("data: ")[2])
 
     assert payload["method"] == "notifications/subscriptions/acknowledged"
-    assert payload["params"]["notifications"] == {"taskIds": ["task-1"]}
+    assert payload["params"]["notifications"] == {"taskIds": [task_id]}
