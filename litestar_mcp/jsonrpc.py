@@ -6,6 +6,8 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from litestar_mcp._unmapped import log_unmapped
+
 if TYPE_CHECKING:
     from litestar_mcp.services.handler import RequestContext
 
@@ -115,21 +117,18 @@ class JSONRPCRouter:
             if request.is_notification:
                 return None
             return _error_response(request.id, exc.error)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - logged under a reference
             # Blanket catch: any uncaught handler exception becomes
             # INTERNAL_ERROR. Log with traceback so production triage
             # has more than the wire payload to work from — silent
-            # -32603 in callers is otherwise undebugable.
-            _logger.exception("JSON-RPC handler %r raised", request.method)
+            # -32603 in callers is otherwise undebugable. The exception's text
+            # can carry internals, so the caller reads only the reference.
+            reference = log_unmapped(_logger, exc, "JSON-RPC handler %r raised", request.method)
             if request.is_notification:
                 return None
             return _error_response(
                 request.id,
-                JSONRPCError(
-                    code=INTERNAL_ERROR,
-                    message="Internal error",
-                    data={"error": type(exc).__name__, "detail": str(exc)},
-                ),
+                JSONRPCError(code=INTERNAL_ERROR, message="Internal error", data={"reference": reference}),
             )
         else:
             if request.is_notification:

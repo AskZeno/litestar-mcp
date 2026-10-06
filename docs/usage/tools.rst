@@ -185,3 +185,15 @@ failure. Only protocol-level problems (an unknown tool name, malformed
 params) use a JSON-RPC ``error`` with ``INVALID_PARAMS`` (``-32602``).
 See :doc:`prompts` and :doc:`resources` for how those primitives map the
 handler's HTTP status onto JSON-RPC codes.
+
+An exception that no layered exception handler maps, and that is neither an
+``MCPToolErrorResult`` nor a Litestar ``HTTPException``, never answers with
+its text: that text can carry internals such as SQL, hostnames, or ids. It is
+logged once at ERROR under a fresh reference (the record's
+``mcp_error_reference`` attribute), and the caller reads only
+``The tool failed. Reference: <reference>``, marked retryable. Resources,
+prompts, and task failures answer the same sentence (for resources and
+prompts in ``error.data.content``, with ``statusCode`` 500). A Litestar
+``HTTPException`` keeps its client-facing detail. To render your own
+content, set ``MCPConfig.tool_exception_result``; it receives the tool name,
+the exception, the logged reference, and the request.

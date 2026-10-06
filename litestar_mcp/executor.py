@@ -360,7 +360,7 @@ async def _run_handler_pipeline(
                 lifecycle_response = Response(
                     content=b"",
                     status_code=500 if raw_result.is_error else 200,
-                ).to_asgi_response(app=app, request=dispatch_request)
+                ).to_asgi_response(None, request=dispatch_request)
                 await _capture_asgi_response(lifecycle_response, dispatch_request)
 
             if specification_result or isinstance(
@@ -407,7 +407,7 @@ async def _drive_terminal_cleanup(
     try:
         cleanup_response = create_exception_response(request, exc)
         asgi_response = cleanup_response.to_asgi_response(
-            app=request.app,
+            None,
             request=request,
             type_encoders=handler.resolve_type_encoders(),
         )
@@ -667,7 +667,7 @@ async def _dispatch_via_exception_handlers(
             raw = await raw
         response = raw if isinstance(raw, Response) else Response(content=raw, status_code=500)
         asgi_response = response.to_asgi_response(
-            app=request.app,
+            None,
             request=request,
             type_encoders=handler.resolve_type_encoders(),
         )
@@ -676,7 +676,7 @@ async def _dispatch_via_exception_handlers(
         # the inner scope so request-owned cleanup hooks can release state.
         fallback = create_exception_response(request, render_exc)
         asgi_response = fallback.to_asgi_response(
-            app=request.app,
+            None,
             request=request,
             type_encoders=handler.resolve_type_encoders(),
         )

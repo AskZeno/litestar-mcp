@@ -301,7 +301,9 @@ class TestToolsCall:
             result = _rpc(client, "tools/call", {"name": "boom", "arguments": {}})
             assert "result" in result
             assert result["result"]["isError"] is True
-            assert "tool exploded" in result["result"]["content"][0]["text"]
+            text = result["result"]["content"][0]["text"]
+            assert text.startswith("The tool failed. Reference: ")
+            assert "tool exploded" not in text
 
 
 # ---------------------------------------------------------------------------

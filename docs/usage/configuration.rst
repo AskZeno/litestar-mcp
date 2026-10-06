@@ -146,6 +146,10 @@ Configuration Options
       - ``None``
       - Optional callback invoked once after each ``tools/call`` dispatch
         with the result or exception and elapsed duration.
+    * - ``tool_exception_result``
+      - ``None``
+      - Optional renderer for the ``isError`` content of a tool exception no
+        exception handler mapped (see :doc:`tools`, "Error Contract").
     * - ``list_page_size``
       - ``100``
       - Server-chosen page size for the ``*/list`` methods (see below).

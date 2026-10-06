@@ -9,10 +9,11 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, get_type_hints
 
-from litestar.exceptions import SerializationException
+from litestar.exceptions import HTTPException, SerializationException
 from litestar.serialization import decode_json, encode_json
 
 from litestar_mcp._cursor import decode_cursor, encode_cursor
+from litestar_mcp._unmapped import UNMAPPED_STATUS, log_unmapped, unmapped_text
 from litestar_mcp.content import (
     MCPBlobResource,
     MCPInputRequiredResult,
@@ -24,8 +25,11 @@ from litestar_mcp.content import (
 )
 from litestar_mcp.error_mapping import (
     mcp_error_for_prompt_execution,
+    mcp_error_for_prompt_refusal,
+    mcp_error_for_resource_content,
     mcp_error_for_resource_not_found,
     mcp_error_for_resource_read,
+    mcp_error_for_unmapped,
 )
 from litestar_mcp.executor import (
     MCPHandlerResponse,
@@ -702,13 +706,29 @@ class MCPHandlerService:
             )
         except JSONRPCErrorException:
             raise
-        except Exception as exc:  # noqa: BLE001
-            status = getattr(exc, "status_code", None)
+        except HTTPException as exc:
+            # A transport refusal's detail is written for the client.
             return _build_tool_result(
                 {"error": str(exc)},
                 is_error=True,
                 max_blob_bytes=self.config.max_blob_bytes,
-                retryable=_retryable_for_status(status) if isinstance(status, int) else None,
+                retryable=_retryable_for_status(exc.status_code),
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Unmapped: its text can carry internals (SQL, hosts, ids), so it is
+            # logged under a reference and the caller reads only that reference.
+            reference = log_unmapped(_logger, exc, "MCP tool %r raised an unmapped exception", tool_name)
+            renderer = self.config.tool_exception_result
+            content = (
+                renderer(tool_name, exc, reference, context.request)
+                if renderer is not None
+                else unmapped_text(reference)
+            )
+            return _build_tool_result(
+                content,
+                is_error=True,
+                max_blob_bytes=self.config.max_blob_bytes,
+                retryable=_retryable_for_status(UNMAPPED_STATUS),
             )
 
         return _build_tool_result(
@@ -1114,8 +1134,11 @@ class MCPHandlerService:
                     _request_context.reset(token)
             except MCPToolErrorResult as err:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
-            except Exception as exc:
+            except HTTPException as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            except Exception as exc:
+                reference = log_unmapped(_logger, exc, "MCP resource read raised an unmapped exception: %s", uri)
+                raise JSONRPCErrorException(mcp_error_for_unmapped("Resource read failed", reference)) from exc
 
             if isinstance(response.content, MCPInputRequiredResult):
                 return response.content.to_result()
@@ -1127,7 +1150,7 @@ class MCPHandlerService:
                     max_blob_bytes=self.config.max_blob_bytes,
                 )
             except ValueError as exc:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+                raise JSONRPCErrorException(mcp_error_for_resource_content(exc)) from exc
 
             ui_meta = _resource_ui_meta(handler, self.config)
             if ui_meta is not None:
@@ -1157,8 +1180,11 @@ class MCPHandlerService:
                     _request_context.reset(token)
             except MCPToolErrorResult as err:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(err)) from err
-            except Exception as exc:
+            except HTTPException as exc:
                 raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+            except Exception as exc:
+                reference = log_unmapped(_logger, exc, "MCP resource read raised an unmapped exception: %s", uri)
+                raise JSONRPCErrorException(mcp_error_for_unmapped("Resource read failed", reference)) from exc
 
             if isinstance(response.content, MCPInputRequiredResult):
                 return response.content.to_result()
@@ -1170,7 +1196,7 @@ class MCPHandlerService:
                     max_blob_bytes=self.config.max_blob_bytes,
                 )
             except ValueError as exc:
-                raise JSONRPCErrorException(mcp_error_for_resource_read(exc)) from exc
+                raise JSONRPCErrorException(mcp_error_for_resource_content(exc)) from exc
 
             ui_meta = _resource_ui_meta(entry.handler, self.config)
             if ui_meta is not None:
@@ -1335,15 +1361,13 @@ class MCPHandlerService:
                 raise JSONRPCErrorException(mcp_error_for_prompt_execution(err)) from err
             except JSONRPCErrorException:
                 raise
-            except Exception as exc:
+            except HTTPException as exc:
                 _logger.exception("Prompt handler execution failed: %s", prompt_name)
-                raise JSONRPCErrorException(
-                    JSONRPCError(
-                        code=INTERNAL_ERROR,
-                        message="Prompt execution failed",
-                        data={"error": type(exc).__name__, "detail": str(exc)},
-                    )
-                ) from exc
+                raise JSONRPCErrorException(mcp_error_for_prompt_refusal(exc)) from exc
+            except Exception as exc:
+                # Unmapped: logged under a reference; the caller reads only the reference.
+                reference = log_unmapped(_logger, exc, "Prompt handler execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(mcp_error_for_unmapped("Prompt execution failed", reference)) from exc
             if isinstance(result, MCPInputRequiredResult):
                 return result.to_result()
             handler_result: dict[str, Any]
@@ -1371,15 +1395,13 @@ class MCPHandlerService:
                         result = await result
                 finally:
                     _request_context.reset(token)
-            except Exception as exc:
+            except HTTPException as exc:
                 _logger.exception("Prompt function execution failed: %s", prompt_name)
-                raise JSONRPCErrorException(
-                    JSONRPCError(
-                        code=INTERNAL_ERROR,
-                        message="Prompt execution failed",
-                        data={"error": type(exc).__name__, "detail": str(exc)},
-                    )
-                ) from exc
+                raise JSONRPCErrorException(mcp_error_for_prompt_refusal(exc)) from exc
+            except Exception as exc:
+                # Unmapped: logged under a reference; the caller reads only the reference.
+                reference = log_unmapped(_logger, exc, "Prompt function execution failed: %s", prompt_name)
+                raise JSONRPCErrorException(mcp_error_for_unmapped("Prompt execution failed", reference)) from exc
             if isinstance(result, MCPInputRequiredResult):
                 return result.to_result()
             messages = _normalize_prompt_result(result)

@@ -118,8 +118,16 @@ async def test_error_paths_do_not_gain_a_declared_block_channel(raises: bool, ca
     )
 
     assert result["isError"] is True
-    assert json.loads(result["content"][0]["text"]) == {"error": "original failure"}
+    if raises:
+        # An unmapped exception answers with its logged reference, never its text.
+        assert result["content"][0]["text"].startswith("The tool failed. Reference: ")
+    else:
+        assert json.loads(result["content"][0]["text"]) == {"error": "original failure"}
     assert len(result["content"]) == 1
     assert "structuredContent" not in result
     assert builder_calls == []
-    assert not [record for record in caplog.records if record.name == "litestar_mcp.services.handler"]
+    # The only handler record an error path may add is the unmapped exception's own.
+    handler_records = [record for record in caplog.records if record.name == "litestar_mcp.services.handler"]
+    assert [record.exc_info[1] if record.exc_info else None for record in handler_records] == (
+        [failure] if raises else []
+    )

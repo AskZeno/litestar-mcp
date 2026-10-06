@@ -11,6 +11,25 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
+    .. change:: answer unmapped exceptions without their text
+        :type: bugfix
+
+        A tool, resource, prompt, task, or JSON-RPC method exception that no
+        exception handler maps, and that is not a Litestar ``HTTPException``,
+        no longer answers with ``str(exc)``, which could carry SQL, hostnames,
+        or ids. It is logged once at ERROR under a fresh reference, and the
+        caller reads only ``The tool failed. Reference: <reference>``.
+        ``MCPConfig.tool_exception_result`` renders a tool's content instead
+        and receives the reference. A resource or prompt ``HTTPException``
+        keeps its detail and gains ``error.data.statusCode``.
+
+    .. change:: render handled exceptions without the deprecated app argument
+        :type: bugfix
+
+        Exception-handler, cleanup, and specification-result responses call
+        ``to_asgi_response`` with ``app=None``, so the dispatch no longer emits
+        Litestar's ``app`` parameter deprecation warning.
+
     .. change:: authorize task actions within a shared owner scope
         :type: feature
 

@@ -37,6 +37,7 @@ from litestar_mcp.config import (
     MCPTaskCreatorResolver,
     MCPTaskOwnerResolver,
     MCPToolPolicy,
+    ToolExceptionRenderer,
 )
 from litestar_mcp.content import MCPBlobResource, MCPInputRequiredResult, MCPResourceLink, MCPToolResult
 from litestar_mcp.exceptions import (
@@ -99,6 +100,7 @@ __all__ = (
     "TaskInvocation",
     "TaskRecord",
     "TokenValidator",
+    "ToolExceptionRenderer",
     "ToolTypeAdapter",
     "ValidationIssue",
     "__version__",

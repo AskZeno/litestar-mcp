@@ -135,7 +135,9 @@ def test_unhandled_exception_still_runs_inner_before_send_hooks() -> "None":
         resp = _call_tool(client, "x")
 
     assert resp["result"]["isError"] is True
-    assert "leak check" in resp["result"]["content"][0]["text"]
+    text = resp["result"]["content"][0]["text"]
+    assert text.startswith("The tool failed. Reference: ")
+    assert "leak check" not in text
     assert seen == ["http.response.start", "http.response.body"]
 
 
@@ -184,7 +186,7 @@ def test_exception_handler_mro_matches_subclass() -> "None":
 
 
 def test_unhandled_exception_falls_through_to_blanket_catch() -> "None":
-    """An exception type without a registered handler goes to the JSON-RPC blanket catch."""
+    """An exception type without a registered handler answers opaquely, without its text."""
 
     generic = "generic boom"
 
@@ -197,7 +199,9 @@ def test_unhandled_exception_falls_through_to_blanket_catch() -> "None":
         resp = _call_tool(client, "x")
 
     assert resp["result"]["isError"] is True
-    assert "generic boom" in resp["result"]["content"][0]["text"]
+    text = resp["result"]["content"][0]["text"]
+    assert text.startswith("The tool failed. Reference: ")
+    assert "generic boom" not in text
 
 
 @pytest.mark.parametrize("layer", ["app", "router", "controller", "route"])

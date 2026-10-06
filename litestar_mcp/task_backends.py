@@ -11,13 +11,17 @@ writer, which persists the record and fans out task-status notifications.
 """
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from litestar_mcp._unmapped import log_unmapped, unmapped_text
 from litestar_mcp.jsonrpc import INTERNAL_ERROR, JSONRPCError, JSONRPCErrorException
 from litestar_mcp.progress import ProgressReporter
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from litestar_mcp.tasks import MCPTaskStore, TaskRecord
@@ -162,10 +166,14 @@ class AsyncioTaskBackend(TaskExecutionBackend):
         except asyncio.CancelledError:
             await store.mark_cancelled(task_id)
         except Exception as exc:  # noqa: BLE001
+            # The exception's text can carry internals: log it under a reference
+            # and report only the reference.
+            reference = log_unmapped(_logger, exc, "MCP task %s failed", task_id)
+            failure = unmapped_text(reference)
             await store.fail(
                 task_id,
-                JSONRPCError(code=INTERNAL_ERROR, message=str(exc)),
-                status_message=str(exc),
+                JSONRPCError(code=INTERNAL_ERROR, message=failure),
+                status_message=failure,
             )
         finally:
             self._runners.pop(task_id, None)
