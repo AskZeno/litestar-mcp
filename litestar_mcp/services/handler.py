@@ -943,6 +943,8 @@ class MCPHandlerService:
                 run_tool=run_tool,
                 progress_token=context.progress_token,
                 progress=self._progress_reporter(context),
+                input_responses=context.input_responses,
+                request_state=context.request_state,
             ),
         )
         return {"resultType": "task", **(started or record).to_dict()}

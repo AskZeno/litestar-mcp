@@ -93,8 +93,19 @@ def _make_task_app(task_config: MCPTaskConfig | None = None) -> Litestar:
             )
         return {"answer": str(context.input_responses["approval"])}
 
+    @get("/input-first-task", sync_to_thread=False)
+    @mcp_tool(name="input_first_task", task_support="required", task_input_before_start=True)
+    async def input_first_task() -> MCPInputRequiredResult | dict[str, str | None]:
+        context = get_mcp_request_context()
+        if not context.input_responses:
+            return MCPInputRequiredResult(
+                input_requests={"user_name": {"method": "elicitation/create", "params": {"message": "Name?"}}},
+                request_state="opaque-round-one-state",
+            )
+        return {"user_name": str(context.input_responses["user_name"]), "request_state": context.request_state}
+
     return Litestar(
-        route_handlers=[optional_task, required_task, forbidden_task, input_task],
+        route_handlers=[optional_task, required_task, forbidden_task, input_task, input_first_task],
         plugins=[LitestarMCP(MCPConfig(tasks=task_config or True))],
     )
 
@@ -235,6 +246,38 @@ def test_tasks_update_resumes_input_required_task() -> None:
     assert "requestState" not in waiting
     assert updated["result"]["resultType"] == "complete"
     assert completed["result"]["resultType"] == "complete"
+
+
+def test_input_gathered_before_task_start_seeds_the_first_run() -> None:
+    """MRTR input gathered synchronously reaches the escalated task's first run (tasks-mrtr-composition)."""
+    with TestClient(app=_make_task_app()) as client:
+        gathering = _rpc(
+            client,
+            "tools/call",
+            {"name": "input_first_task", "arguments": {}},
+            tasks_capable=True,
+        )["result"]
+        created = _rpc(
+            client,
+            "tools/call",
+            {
+                "name": "input_first_task",
+                "arguments": {},
+                "inputResponses": {"user_name": "Ada"},
+                "requestState": gathering["requestState"],
+            },
+            tasks_capable=True,
+        )["result"]
+        completed = _wait_for_status(client, created["taskId"], "completed")
+
+    assert gathering["resultType"] == "input_required"
+    assert "taskId" not in gathering
+    assert created["resultType"] == "task"
+    assert "requestState" not in created
+    assert completed["result"]["structuredContent"] == {
+        "user_name": "Ada",
+        "request_state": "opaque-round-one-state",
+    }
 
 
 def test_tasks_cancel_is_empty_cooperative_acknowledgement() -> None:

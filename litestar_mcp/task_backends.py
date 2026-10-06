@@ -56,6 +56,11 @@ class TaskInvocation:
     progress: "ProgressReporter" = field(default_factory=ProgressReporter)
     """Reporter bound to the creating request's progress token; backends
     emit mid-execution ``notifications/progress`` through it."""
+    input_responses: "dict[str, Any] | None" = None
+    """Responses gathered by the synchronous MRTR rounds before the task
+    was created; the first ``run_tool`` pass receives them."""
+    request_state: "str | None" = None
+    """The ``requestState`` that accompanied ``input_responses``."""
 
 
 class TaskExecutionBackend(ABC):
@@ -145,8 +150,8 @@ class AsyncioTaskBackend(TaskExecutionBackend):
     async def _drive(self, request: "TaskInvocation") -> "None":
         store = self.store
         task_id = request.task_id
-        input_responses: dict[str, Any] | None = None
-        request_state: str | None = None
+        input_responses = request.input_responses
+        request_state = request.request_state
         try:
             while True:
                 result = await request.run_tool(input_responses, request_state)
