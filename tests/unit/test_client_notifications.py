@@ -39,7 +39,9 @@ class _RecordingPolicy:
         self.cancelled.append((name, stream_id, reason))
 
 
-def _app(*, policy: _RecordingPolicy | None = None, streamable: bool = True, calls: list[bool] | None = None) -> Litestar:
+def _app(
+    *, policy: _RecordingPolicy | None = None, streamable: bool = True, calls: list[bool] | None = None
+) -> Litestar:
     seen = calls if calls is not None else []
 
     @post("/create", mcp_tool="create_document", mcp_input_partial=True, sync_to_thread=False)

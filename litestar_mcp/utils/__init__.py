@@ -558,11 +558,12 @@ def match_uri(template: "str", uri: "str") -> "dict[str, str] | None":
     undeclared parameters ignored). Without a query expansion the URI is
     matched whole, so a ``?`` stays part of the last variable's value.
     """
-    segments = parse_template(template)
+    template_segments = parse_template(template)
     query: _QueryExpansion | None = None
-    if segments and isinstance(segments[-1], _QueryExpansion):
-        query = segments[-1]
-        segments = segments[:-1]
+    if template_segments and isinstance(template_segments[-1], _QueryExpansion):
+        query = template_segments[-1]
+    # parse_template appends a query expansion only last, so the rest is the path.
+    segments = [seg for seg in template_segments if not isinstance(seg, _QueryExpansion)]
     values: dict[str, str] = {}
     remaining = uri
     query_string = ""

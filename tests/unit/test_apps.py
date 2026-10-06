@@ -144,7 +144,8 @@ def _assert_startup_value_error(app: Litestar, needle: str) -> None:
 
     def flatten(error: BaseException) -> list[BaseException]:
         if group_type is not None and isinstance(error, group_type):
-            return [leaf for sub in error.exceptions for leaf in flatten(sub)]  # type: ignore[attr-defined]
+            nested: tuple[BaseException, ...] = getattr(error, "exceptions", ())
+            return [leaf for sub in nested for leaf in flatten(sub)]
         return [error]
 
     with pytest.raises(BaseException) as excinfo, TestClient(app=app):
