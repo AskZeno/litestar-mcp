@@ -197,3 +197,14 @@ prompts in ``error.data.content``, with ``statusCode`` 500). A Litestar
 ``HTTPException`` keeps its client-facing detail. To render your own
 content, set ``MCPConfig.tool_exception_result``; it receives the tool name,
 the exception, the logged reference, and the request.
+
+An exception handler may answer with a complete
+:class:`~litestar_mcp.MCPToolResult`: bare, or as the content of a
+``Response`` whose status it carries (a bare result answers with 500). The
+result reaches the caller as-is: its content blocks, ``structuredContent``
+and result-level ``_meta``. Only the status, headers and cookies cross the
+dispatch's send lifecycle, so request cleanup hooks still fire, and
+``isError`` follows that status. ``dev.litestar/retryable`` follows the
+status unless the result's ``_meta`` already declares it. For a resource
+read or prompt, the result's ``content``, ``structuredContent`` and
+``_meta`` travel in ``error.data`` beside ``statusCode``.
