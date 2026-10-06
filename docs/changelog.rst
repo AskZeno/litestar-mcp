@@ -11,6 +11,15 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
+    .. change:: seed a task's first run with the input gathered before it started
+        :type: bugfix
+
+        A ``task_input_before_start`` tool gathers input through synchronous
+        multi-round-trip rounds and escalates to a task on the final round.
+        That task's first run now receives the gathered ``inputResponses`` and
+        ``requestState`` through ``TaskInvocation``; before, it ran without
+        them, asked again, and never reached a terminal state.
+
     .. change:: let an exception handler answer with a complete tool result
         :type: feature
 
