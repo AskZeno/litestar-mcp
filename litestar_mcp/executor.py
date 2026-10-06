@@ -650,6 +650,12 @@ async def _dispatch_via_exception_handlers(
     ``send`` channel and therefore every ``before_send`` hook. Driving the
     rendered response through :func:`_capture_asgi_response` preserves
     transaction/session cleanup on handled failures just as on success.
+
+    A handler may answer with a complete :class:`MCPToolResult`, bare or as
+    the content of a ``Response`` carrying its status. Only that status (and
+    the response's headers and cookies) crosses the send lifecycle; the tool
+    result itself is the dispatch's content, so its blocks,
+    ``structuredContent`` and result-level ``_meta`` reach the caller as-is.
     """
     exception_handlers = handler.resolve_exception_handlers() or {}
     matched = None
@@ -661,11 +667,20 @@ async def _dispatch_via_exception_handlers(
     if matched is None:
         return None
 
+    tool_result: MCPToolResult | None = None
     try:
         raw: Any = matched(request, exc)
         if inspect.isawaitable(raw):
             raw = await raw
         response = raw if isinstance(raw, Response) else Response(content=raw, status_code=500)
+        if isinstance(response.content, MCPToolResult):
+            tool_result = response.content
+            response = Response(
+                content=b"",
+                status_code=response.status_code,
+                headers=response.headers,
+                cookies=response.cookies,
+            )
         asgi_response = response.to_asgi_response(
             None,
             request=request,
@@ -674,13 +689,19 @@ async def _dispatch_via_exception_handlers(
     except Exception as render_exc:  # noqa: BLE001 - fallback must still drive cleanup
         # Even a broken custom renderer must send a terminal response through
         # the inner scope so request-owned cleanup hooks can release state.
+        tool_result = None
         fallback = create_exception_response(request, render_exc)
         asgi_response = fallback.to_asgi_response(
             None,
             request=request,
             type_encoders=handler.resolve_type_encoders(),
         )
-    return await _capture_asgi_response(asgi_response, request)
+    captured = await _capture_asgi_response(asgi_response, request)
+    if tool_result is None:
+        return captured
+    return MCPHandlerResponse(
+        content=tool_result, status_code=captured.status_code, body=b"", media_type="application/json"
+    )
 
 
 _PATH_PARAMETERS_CACHE: "weakref.WeakKeyDictionary[Any, dict[str, Any]]" = weakref.WeakKeyDictionary()

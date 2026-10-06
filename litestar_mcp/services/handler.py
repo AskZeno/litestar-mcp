@@ -377,34 +377,39 @@ def _build_tool_result(
         if isinstance(value, MCPToolResult):
             result = value.to_result(max_blob_bytes=max_blob_bytes)
             result["isError"] = bool(is_error or result.get("isError", False))
-            return result
-        if _looks_like_tool_content(value):
+        elif _looks_like_tool_content(value):
             return {
                 "content": normalize_content_blocks(value, max_blob_bytes=max_blob_bytes),
                 "isError": is_error,
             }
-        result = {
-            "content": [{"type": "text", "text": _serialize_tool_content(value)}],
-            "isError": is_error,
-        }
-        # The tools specification has a structured result travel in
-        # `structuredContent`, mirrored as serialized JSON in a text block
-        # for peers that read content alone. A bare scalar has no
-        # structure to declare, so it stays text-only.
-        if not is_error:
-            structured = _structured_content(value)
-            if structured is not None:
-                result["structuredContent"] = structured
-        if blocks:
-            result["content"] = [*result["content"], *normalize_content_blocks(blocks, max_blob_bytes=max_blob_bytes)]
+        else:
+            result = {
+                "content": [{"type": "text", "text": _serialize_tool_content(value)}],
+                "isError": is_error,
+            }
+            # The tools specification has a structured result travel in
+            # `structuredContent`, mirrored as serialized JSON in a text block
+            # for peers that read content alone. A bare scalar has no
+            # structure to declare, so it stays text-only.
+            if not is_error:
+                structured = _structured_content(value)
+                if structured is not None:
+                    result["structuredContent"] = structured
+            if blocks:
+                result["content"] = [
+                    *result["content"],
+                    *normalize_content_blocks(blocks, max_blob_bytes=max_blob_bytes),
+                ]
     except (TypeError, ValueError) as exc:
         result = {
             "content": [{"type": "text", "text": _serialize_tool_content({"error": str(exc)})}],
             "isError": True,
         }
     if retryable is not None and result.get("isError"):
+        # A result that declares its own retryability (a handler's complete
+        # MCPToolResult) knows better than its status.
         meta = result.get("_meta")
-        result["_meta"] = {**(meta if isinstance(meta, dict) else {}), RETRYABLE_META_KEY: retryable}
+        result["_meta"] = {RETRYABLE_META_KEY: retryable, **(meta if isinstance(meta, dict) else {})}
     return result
 
 
@@ -938,6 +943,8 @@ class MCPHandlerService:
                 run_tool=run_tool,
                 progress_token=context.progress_token,
                 progress=self._progress_reporter(context),
+                input_responses=context.input_responses,
+                request_state=context.request_state,
             ),
         )
         return {"resultType": "task", **(started or record).to_dict()}
