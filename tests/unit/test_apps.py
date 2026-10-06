@@ -1,6 +1,5 @@
 """MCP Apps extension (SEP-1865): io.modelcontextprotocol/ui server contract."""
 
-import builtins
 from typing import Any, cast
 
 import pytest
@@ -140,12 +139,11 @@ def test_ui_resource_read_returns_profile_mime_and_meta_ui_passthrough() -> None
 def _assert_startup_value_error(app: Litestar, needle: str) -> None:
     """Startup failures surface wrapped in the lifespan's exception group."""
 
-    group_type = getattr(builtins, "BaseExceptionGroup", None)
-
     def flatten(error: BaseException) -> list[BaseException]:
-        if group_type is not None and isinstance(error, group_type):
-            nested: tuple[BaseException, ...] = getattr(error, "exceptions", ())
-            return [leaf for sub in nested for leaf in flatten(sub)]
+        # Builtin on 3.11+, the exceptiongroup backport on 3.10: both carry ``exceptions``.
+        nested: object = getattr(error, "exceptions", None)
+        if isinstance(nested, tuple):
+            return [leaf for sub in nested if isinstance(sub, BaseException) for leaf in flatten(sub)]
         return [error]
 
     with pytest.raises(BaseException) as excinfo, TestClient(app=app):
