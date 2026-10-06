@@ -31,6 +31,7 @@ this to -32602 (Invalid params).
 from typing import TYPE_CHECKING, Any
 
 from litestar_mcp._unmapped import UNMAPPED_STATUS, unmapped_content
+from litestar_mcp.content import MCPToolResult
 from litestar_mcp.executor import MCPToolErrorResult
 from litestar_mcp.jsonrpc import INTERNAL_ERROR, JSONRPCError
 
@@ -41,6 +42,12 @@ RESOURCE_NOT_FOUND = -32602
 
 
 def _tool_error_data(err: "MCPToolErrorResult") -> "dict[str, Any]":
+    if isinstance(err.content, MCPToolResult):
+        # An exception handler's complete tool result: its blocks,
+        # structuredContent and _meta, beside the status it answered with.
+        result = err.content.to_result()
+        del result["isError"]
+        return {"statusCode": err.status_code, **result}
     return {"statusCode": err.status_code, "content": err.content}
 
 

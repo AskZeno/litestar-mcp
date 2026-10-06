@@ -11,6 +11,17 @@ Recent Updates
 
 .. changelog:: 0.13.0
 
+    .. change:: let an exception handler answer with a complete tool result
+        :type: feature
+
+        An exception handler may return an ``MCPToolResult``, bare or as a
+        ``Response``'s content carrying its status. The tool result reaches
+        the caller as-is, including ``structuredContent`` and result-level
+        ``_meta``, so a host can attach machine-readable error facts to a tool
+        execution error. Only the status, headers and cookies cross the send
+        lifecycle, and a result that declares ``dev.litestar/retryable`` keeps
+        it. Resource and prompt errors carry the result in ``error.data``.
+
     .. change:: answer unmapped exceptions without their text
         :type: bugfix
 
