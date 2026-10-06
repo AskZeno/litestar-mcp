@@ -166,6 +166,25 @@ class MCPTaskAuthorizer(Protocol):
         ...
 
 
+class ToolExceptionRenderer(Protocol):
+    """Render the ``isError`` content for an exception no handler mapped.
+
+    Called after the exception is logged under ``reference``. Whatever it
+    returns is the tool result's content, so it must not carry the
+    exception's text unless the host knows that text is safe for the caller.
+    """
+
+    def __call__(
+        self,
+        tool_name: "str",
+        exception: "Exception",
+        reference: "str",
+        request: "Request[Any, Any, Any] | None",
+        /,
+    ) -> "Any":
+        """Return the tool-error content for ``exception``."""
+
+
 class AfterToolCallHook(Protocol):
     """Callback invoked after an MCP ``tools/call`` dispatch."""
 
@@ -418,6 +437,12 @@ class MCPConfig:
         after_tool_call: Optional callback invoked once after each
             ``tools/call`` dispatch with either the result or exception and
             elapsed dispatch duration in seconds.
+        tool_exception_result: Optional renderer for the ``isError`` content
+            of a tool exception that no exception handler mapped and that is
+            not a Litestar ``HTTPException``. The exception is logged at
+            ERROR under a fresh reference first; the default content is the
+            text ``The tool failed. Reference: <reference>``. The exception's
+            text is never the default answer because it can carry internals.
         max_blob_bytes: Maximum raw byte length for base64-embedded MCP blobs.
             Set to ``None`` to disable the library cap.
         type_adapters: Optional first-match tool type adapter chain. ``None``
@@ -460,6 +485,7 @@ class MCPConfig:
     list_page_size: "int" = 100
     before_tool_call: "BeforeToolCallHook | None" = None
     after_tool_call: "AfterToolCallHook | None" = None
+    tool_exception_result: "ToolExceptionRenderer | None" = None
     max_blob_bytes: "int | None" = 25 * 1024 * 1024
     route_opt: "dict[str, Any] | None" = None
     register_oauth_protected_resource: "bool" = True

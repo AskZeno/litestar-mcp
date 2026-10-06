@@ -1014,8 +1014,12 @@ class TestPromptErrorMapping:
             # Per JSON-RPC 2.0 §5.1, structured exception context lives in
             # the ``data`` member; the ``message`` is a stable label.
             assert data["error"]["message"] == "Prompt execution failed"
-            assert "kaboom" in data["error"]["data"]["detail"]
-            assert data["error"]["data"]["error"] == "RuntimeError"
+            # The exception's text can carry internals: data holds only the
+            # reference sentence the failure was logged under.
+            assert data["error"]["data"]["statusCode"] == 500
+            [block] = data["error"]["data"]["content"]
+            assert block["text"].startswith("The tool failed. Reference: ")
+            assert "kaboom" not in str(data["error"])
 
     def test_handler_4xx_maps_to_internal_error(self) -> "None":
         """Handler execution failures surface as -32603 with structured data."""

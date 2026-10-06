@@ -41,6 +41,13 @@ MCPTaskAuthorizer
    :members:
    :show-inheritance:
 
+ToolExceptionRenderer
+---------------------
+
+.. autoclass:: ToolExceptionRenderer
+   :members:
+   :show-inheritance:
+
 .. currentmodule:: litestar_mcp.app
 
 MCPStdioContext
