@@ -630,7 +630,7 @@ class MCPController(Controller):
                         _rpc_params(rpc_request),
                         _build_notification_context(request, rpc_request, config),
                     )
-                except Exception:
+                except Exception:  # noqa: BLE001 - a failed client notification answers a fixed 400
                     return _error(
                         None,
                         code=INTERNAL_ERROR,

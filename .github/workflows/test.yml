@@ -89,10 +89,16 @@ jobs:
           import sys
 
           import litestar_mcp
+          from litestar_mcp.exceptions import MissingDependencyError
 
           for module in walk_packages(litestar_mcp.__path__, "litestar_mcp."):
               if not any(part.startswith("_") for part in module.name.split(".")):
-                  importlib.import_module(module.name)
+                  try:
+                      importlib.import_module(module.name)
+                  except MissingDependencyError:
+                      # An optional integration refuses to import without its extra.
+                      if not module.name.startswith("litestar_mcp.contrib."):
+                          raise
 
           assert files("litestar_mcp").joinpath("py.typed").is_file()
           assert "pytest" not in sys.modules

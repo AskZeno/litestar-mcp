@@ -775,7 +775,7 @@ class MCP:
                 writer.write(encode_json(payload) + b"\n")
                 await writer.drain()
 
-        async def process(raw: "Any") -> "None":
+        async def process(raw: "Any") -> "None":  # noqa: C901, PLR0911, PLR0915 - one stdio message's dispatch
             try:
                 rpc_request = parse_request(raw)
             except JSONRPCErrorException as exc:

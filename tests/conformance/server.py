@@ -496,10 +496,16 @@ def simple_prompt() -> str:
     return "This is a simple prompt for testing."
 
 
+def _complete_arg1(value: str, _context: dict[str, str]) -> list[str]:
+    """Complete ``arg1`` from a fixed vocabulary, so ``completion/complete`` exists."""
+    return [option for option in ("test", "testing", "value") if option.startswith(value)]
+
+
 @mcp_prompt(
     name="test_prompt_with_arguments",
     title="Prompt With Arguments",
     description="A parameterized test prompt.",
+    completions={"arg1": _complete_arg1},
 )
 def prompt_with_arguments(arg1: str, arg2: str) -> str:
     return f"Prompt with arguments: arg1='{arg1}', arg2='{arg2}'"

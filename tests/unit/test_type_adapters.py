@@ -132,12 +132,14 @@ def test_explicit_adapter_precedes_the_msgspec_terminal() -> None:
         def supports_type(self, annotation: Any) -> bool:
             return annotation is str
 
-        def validate(self, value: Any, _annotation: Any) -> list[ValidationIssue]:
+        def validate(self, value: Any, annotation: Any) -> list[ValidationIssue]:
+            del annotation
             if isinstance(value, str) and value.isupper():
                 return []
             return [ValidationIssue(message="Value must be uppercase")]
 
-        def json_schema(self, _annotation: Any) -> dict[str, Any] | None:
+        def json_schema(self, annotation: Any) -> dict[str, Any] | None:
+            del annotation
             return {"type": "string", "format": "uppercase"}
 
     @get("/shout", mcp_tool="shout", sync_to_thread=False)

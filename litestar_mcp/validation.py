@@ -37,12 +37,15 @@ class ToolTypeAdapter(Protocol):
 
     def supports_type(self, annotation: "Any") -> "bool":
         """Return whether this adapter owns ``annotation``."""
+        ...
 
     def validate(self, value: "Any", annotation: "Any") -> "list[ValidationIssue]":
         """Return validation issues; an empty list means accepted."""
+        ...
 
     def json_schema(self, annotation: "Any") -> "dict[str, Any] | None":
         """Return JSON Schema when owned, or ``None`` for legacy fallback."""
+        ...
 
 
 class MsgspecToolTypeAdapter:
