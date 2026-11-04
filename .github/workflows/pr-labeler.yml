@@ -10,7 +10,7 @@ jobs:
       pull-requests: write
       checks: write
       statuses: write
-    runs-on: ubuntu-latest
+    runs-on: zeno-linux
     steps:
     - uses: fuxingloh/multi-labeler@bcd50af464202999e57f556b4aefcf05a34abf85 # v5
       with:
@@ -21,7 +21,7 @@ jobs:
     if: ${{ always() }}
     permissions:
       pull-requests: write
-    runs-on: ubuntu-latest
+    runs-on: zeno-linux
     steps:
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:

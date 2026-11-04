@@ -11,7 +11,7 @@ permissions:
 jobs:
   generate-changelog:
     name: Generate changelog
-    runs-on: ubuntu-22.04
+    runs-on: zeno-linux
     outputs:
       release_body: ${{ steps.git-cliff.outputs.content }}
     steps:
