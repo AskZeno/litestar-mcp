@@ -1,0 +1,43 @@
+name: Release Age Check
+
+# Called by release-age.yml; the job name keeps the check name `release-age / release-age`.
+# Copy of AskZeno/infrastructure's release-age-check.yml (infra#2975, infra#2982); keep in step.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  release-age:
+    name: release-age
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # In a merge queue run (merge_group), base_sha is the parent of the queue commit, so the
+      # diff is this PR's share of the group; PRs ahead of it are checked in their own entries.
+      - name: Check out the pull request
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check --no-cache-dir 'PyYAML==6.0.2'
+
+      - name: Check release ages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python .github/scripts/release_age_check.py
+          --base "$BASE_SHA" --head "$HEAD_SHA" --min-age-hours 168
