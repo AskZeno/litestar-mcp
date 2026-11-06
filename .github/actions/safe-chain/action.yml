@@ -1,0 +1,54 @@
+name: Aikido Safe Chain
+description: >-
+  Route npm, npx, yarn, pnpm, bun, pip, uv, uvx, poetry, pipx and pdm through Aikido Safe Chain
+  for the rest of the job, which blocks known malware and hides npm and PyPI releases younger than
+  7 days (the org Renovate minimumReleaseAge, LEA-197). Run it after every setup-node,
+  setup-python and setup-uv step: those prepend PATH and would otherwise shadow the shims.
+  Copy of AskZeno/infrastructure .github/actions/safe-chain (infra#2981); keep in step.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Safe Chain
+      id: install
+      shell: bash
+      env:
+        # Bump both lines together. The installer's SHA-256 is the release asset digest on
+        # https://github.com/AikidoSec/safe-chain/releases; the installer pins and checks the
+        # binary's own digest. Renovate proposes the version (customManagers:githubActionsVersions)
+        # under the same 7-day minimum release age; the digest is then updated by hand.
+        # renovate: datasource=github-releases depName=AikidoSec/safe-chain
+        AIKIDO_SAFE_CHAIN_VERSION: "1.5.27"
+        AIKIDO_SAFE_CHAIN_INSTALLER_SHA256: 600ebddcb3aaf1fd53653a8d7985df44528722c0f5ee7eb9fff86f26a1a4e5a8
+      run: |
+        set -euo pipefail
+        tmp="$(mktemp -d)"
+        curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 --connect-timeout 20 \
+          -o "${tmp}/install-safe-chain.sh" \
+          "https://github.com/AikidoSec/safe-chain/releases/download/${AIKIDO_SAFE_CHAIN_VERSION}/install-safe-chain.sh"
+        echo "${AIKIDO_SAFE_CHAIN_INSTALLER_SHA256}  ${tmp}/install-safe-chain.sh" | sha256sum -c -
+        sh "${tmp}/install-safe-chain.sh" --ci
+        rm -rf "${tmp}"
+        echo "version=${AIKIDO_SAFE_CHAIN_VERSION}" >> "${GITHUB_OUTPUT}"
+        # 168 h = 7 days. Never lower this or add exemptions; the dependency-release-age guard fails
+        # on any lower value, on the skip flag and on exclusion lists anywhere in the repository.
+        echo "SAFE_CHAIN_MINIMUM_PACKAGE_AGE_HOURS=168" >> "${GITHUB_ENV}"
+
+    - name: Check that the Safe Chain shims come first on PATH
+      shell: bash
+      env:
+        EXPECTED_VERSION: ${{ steps.install.outputs.version }}
+      run: |
+        set -euo pipefail
+        shims="${HOME}/.safe-chain/shims"
+        safe-chain --version | grep -Fx "Current safe-chain version: ${EXPECTED_VERSION}"
+        for tool in npm npx pip pip3 uv uvx poetry pipx; do
+          path="$(command -v "${tool}" || true)"
+          [ -n "${path}" ] || continue
+          if [ "$(dirname "${path}")" != "${shims}" ]; then
+            echo "::error::${tool} resolves to ${path}, not ${shims}/${tool}; run this action after every setup-* step"
+            exit 1
+          fi
+          echo "${tool} -> ${path}"
+        done
+        test "${SAFE_CHAIN_MINIMUM_PACKAGE_AGE_HOURS}" = 168

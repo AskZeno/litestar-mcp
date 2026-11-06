@@ -33,6 +33,7 @@ upstream change rebases this branch smaller.
 | Delta | Commits | Upstream posture |
 | --- | --- | --- |
 | CI triggers include `zeno`; fork docs | `8b45dda`, `d78f2a4`, `55d494d` | not for upstream |
+| 7-day release-age checks (`Dependency release age (npm, PyPI)`, `release-age / release-age`): copies of AskZeno/infrastructure's gates on GitHub-hosted runners, because this public repository cannot use that private repository's actions or runners. Keep `.github/scripts/`, `.github/actions/safe-chain/` and the release-age workflows in step with infra; move them to a public shared home if one is created | `ci/release-age-checks` | not for upstream |
 | Pluggable task execution backend: `MCPTaskStore` keeps records + `record_status`; `TaskExecutionBackend` (`start`/`cancel`/`deliver_input`) owns execution; `AsyncioTaskBackend` default preserves 0.13.0 behavior | `284e2fc` | PR candidate (`upstream/task-backend-seam`) |
 | Protocol-standard unlimited task lifetime: `MCPTaskConfig.default_ttl_ms=None` persists `ttlMs: null` records without store expiry for durable application operations | current `zeno.3` wave | task-seam PR candidate |
 | Request-scoped progress: `params._meta.progressToken` threads through `ProgressReporter`; HTTP SSE and stdio deliver notifications on the owning request before its final response, and disconnect cancels dispatch | `c19c21a`, `a80c762` | PR candidate (`upstream/progress-notifications`) |

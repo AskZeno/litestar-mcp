@@ -1,0 +1,30 @@
+name: Release Age
+
+# Required check `release-age / release-age`: no PR may adopt a dependency release younger than
+# 7 days (Renovate's minimumReleaseAge, for every PR): images, actions, PyPI and npm pins and more.
+# Re-runs when labels or the body change so the `release-age-exception` label and its
+# `Release-age exception:` line take effect. Aikido's safe-patch list
+# (https://malware-list.aikido.dev/safe_patches.json) exempts confirmed CVE patch releases.
+#
+# Copy of AskZeno/infrastructure's release-age-check.yml and .github/actions/release-age
+# (infra#2975, infra#2982). This repository is public, so it cannot call that private
+# repository's reusable workflow or use its self-hosted runners; keep this copy in step with
+# infra's check. The check name comes from this job id plus the called job's name. No `paths:`
+# filter: a required check must always report.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+  merge_group:
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: release-age-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-age:
+    uses: ./.github/workflows/release-age-check.yml

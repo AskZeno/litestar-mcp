@@ -160,6 +160,8 @@ search = 'version = "{current_version}"'
 [tool.ruff]
 line-length = 120
 src = ["litestar_mcp", "tests", "examples", "docs", "docs/examples"]
+# Copies of AskZeno/infrastructure CI gates; kept byte-close to the source, not restyled.
+extend-exclude = [".github/scripts"]
 target-version = "py310"
 
 [tool.ruff.lint]
